@@ -1,0 +1,8 @@
+# Keep the Docker build context small. The frontend bundle is rebuilt inside the
+# image (see Dockerfile), so node_modules and local artifacts are not needed.
+.git/
+web/frontend/node_modules/
+/planner
+*.db
+*.db-shm
+*.db-wal

@@ -1,0 +1,14 @@
+# gcloud uses this file (NOT .gitignore) to decide what to upload for
+# `gcloud run deploy --source .`. It must exist, because otherwise gcloud falls
+# back to .gitignore — which excludes web/frontend artifacts and could drop files
+# the multi-stage Docker build needs.
+#
+# Keep the frontend SOURCE (web/frontend/src, package.json, package-lock.json) so
+# the Docker frontend stage can rebuild the bundle. Drop heavy/local-only cruft.
+.git/
+.gitignore
+web/frontend/node_modules/
+/planner
+*.db
+*.db-shm
+*.db-wal

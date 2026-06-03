@@ -23,7 +23,10 @@ any existing `<!-- BEGIN PLANNER -->` section; leave everything else untouched.
 ## Plan review with `planner`
 
 Before any non-trivial change, develop a plan in plan mode, post it to `planner`,
-and iterate with the human until they approve. Only then start implementing.
+and iterate with the human until they approve. Only then start implementing. Every
+substantive `planner` create *and* update goes through plan mode — post from its
+temp file, never hand-author a plan and post it directly. Very small edits (typos,
+a line of wording) can be posted directly without entering plan mode.
 
 **Server:** {{BASE}} (default `http://localhost:8080`). Pass `--server {{BASE}}` if
 it differs. The human runs the server — never start it yourself.
@@ -41,7 +44,9 @@ what's out of scope.
    the `quote`/lines it anchors to (or `whole_file`), and `replies`.
 3. **Respond:** reply to address, ask, or push back —
    `planner reply <comment-id> -m "..."` (attributed to the agent). When you revise,
-   post a new version: `planner update <plan-id> --file <plan-mode-file>`.
+   **while still in plan mode** (re-enter it if you've since left), edit the
+   plan-mode temp file there, then post a new version:
+   `planner update <plan-id> --file <plan-mode-file>`.
 4. **Repeat** 2–3 until approved. Open comments are blocking — don't code while any
    on the latest version are unaddressed. You don't resolve comments; the human does.
 

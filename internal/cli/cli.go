@@ -240,7 +240,9 @@ func cmdCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	created, err := newClient(*server).createPlan(*title, content, currentProject())
+	project := currentProject()
+	files := snapshotFiles(project, content)
+	created, err := newClient(*server).createPlan(*title, content, project, files)
 	if err != nil {
 		return err
 	}
@@ -263,7 +265,8 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
-	created, err := newClient(*server).addVersion(planID, content)
+	files := snapshotFiles(currentProject(), content)
+	created, err := newClient(*server).addVersion(planID, content, files)
 	if err != nil {
 		return err
 	}

@@ -54,7 +54,7 @@ func TestRoundTrip(t *testing.T) {
 			s := open(t)
 			defer s.Close()
 
-			p, v1, err := s.CreatePlan("Demo", "line1\nline2\nline3", "/work/demo")
+			p, v1, err := s.CreatePlan("Demo", "line1\nline2\nline3", "/work/demo", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +81,7 @@ func TestRoundTrip(t *testing.T) {
 			}
 
 			// post v2
-			v2, err := s.AddVersion(p.ID, "line1 better\nline4")
+			v2, err := s.AddVersion(p.ID, "line1 better\nline4", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -181,7 +181,7 @@ func TestPlanStatusAndProject(t *testing.T) {
 			s := open(t)
 			defer s.Close()
 
-			p, _, err := s.CreatePlan("Proj", "body", "/home/me/repo")
+			p, _, err := s.CreatePlan("Proj", "body", "/home/me/repo", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -221,6 +221,100 @@ func TestPlanStatusAndProject(t *testing.T) {
 			// Unknown plan is ErrNotFound.
 			if err := s.SetPlanStatus("pl_does_not_exist", PlanCompleted); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("SetPlanStatus on missing plan should be ErrNotFound, got %v", err)
+			}
+		})
+	}
+}
+
+// TestFileSnapshots covers the content-addressed referenced-file store across
+// both backends: snapshots round-trip via GetVersionFileList + GetBlob; identical
+// content under two versions collapses to one blob but keeps two list entries;
+// and DeletePlan clears a plan's list entries while sweeping only the blobs that
+// no surviving plan still references.
+func TestFileSnapshots(t *testing.T) {
+	for name, open := range backends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			defer s.Close()
+
+			shared := FileSnapshot{Path: "go.mod", Language: "", Content: "module example\n\ngo 1.22\n"}
+			only := FileSnapshot{Path: "main.go", Language: "go", Content: "package main\n"}
+
+			// (a) round-trip: a snapshot's content is retrievable via GetBlob for the
+			// sha returned by GetVersionFileList.
+			p, v1, err := s.CreatePlan("Files", "see main.go", "/work", []FileSnapshot{shared, only})
+			if err != nil {
+				t.Fatal(err)
+			}
+			refs, err := s.GetVersionFileList(v1.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(refs) != 2 {
+				t.Fatalf("want 2 file refs, got %d", len(refs))
+			}
+			byPath := map[string]FileRef{}
+			for _, r := range refs {
+				byPath[r.Path] = r
+			}
+			if r, ok := byPath["main.go"]; !ok || r.Language != "go" {
+				t.Fatalf("main.go ref missing/wrong: %+v", r)
+			}
+			gotContent, err := s.GetBlob(byPath["go.mod"].SHA)
+			if err != nil || gotContent != shared.Content {
+				t.Fatalf("blob round-trip mismatch: %q err=%v", gotContent, err)
+			}
+			if _, err := s.GetBlob("deadbeef"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetBlob of unknown sha should be ErrNotFound, got %v", err)
+			}
+
+			// (b) dedup: the same content under a second version yields one blob but
+			// two list entries, both resolvable to the same sha.
+			v2, err := s.AddVersion(p.ID, "still see go.mod", []FileSnapshot{shared})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v2refs, err := s.GetVersionFileList(v2.ID)
+			if err != nil || len(v2refs) != 1 {
+				t.Fatalf("v2 want 1 file ref, got %d (err=%v)", len(v2refs), err)
+			}
+			if v2refs[0].SHA != byPath["go.mod"].SHA {
+				t.Fatalf("identical content should share a sha: %s vs %s", v2refs[0].SHA, byPath["go.mod"].SHA)
+			}
+
+			// (c) sweep: a second plan re-cites go.mod (same blob). Deleting the first
+			// plan keeps the shared blob (still referenced by plan 2) but removes the
+			// now-unreferenced main.go blob and plan 1's list entries.
+			mainSHA := byPath["main.go"].SHA
+			sharedSHA := byPath["go.mod"].SHA
+			p2, p2v1, err := s.CreatePlan("Files2", "see go.mod", "/work", []FileSnapshot{shared})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.DeletePlan(p.ID); err != nil {
+				t.Fatal(err)
+			}
+			// plan 1's version file lists are gone.
+			if refs, _ := s.GetVersionFileList(v1.ID); len(refs) != 0 {
+				t.Fatalf("plan 1 file list should be cleared, got %d", len(refs))
+			}
+			// main.go had only plan 1 as referrer → swept.
+			if _, err := s.GetBlob(mainSHA); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("unreferenced blob should be swept, got %v", err)
+			}
+			// go.mod still referenced by plan 2 → survives.
+			if _, err := s.GetBlob(sharedSHA); err != nil {
+				t.Fatalf("shared blob should survive while plan 2 references it: %v", err)
+			}
+			if refs, _ := s.GetVersionFileList(p2v1.ID); len(refs) != 1 {
+				t.Fatalf("plan 2 should still reference go.mod, got %d", len(refs))
+			}
+			// Deleting the last referrer removes the shared blob too.
+			if err := s.DeletePlan(p2.ID); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.GetBlob(sharedSHA); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("blob should be swept once its last referrer is gone, got %v", err)
 			}
 		})
 	}

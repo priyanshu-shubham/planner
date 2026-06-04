@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
 import { MarkdownDoc } from "./MarkdownDoc.jsx";
+import { CodePreview } from "./CodePreview.jsx";
 import { TrashIcon } from "./icons.jsx";
 
 export function VersionPage({ planId, number, navigate }) {
@@ -81,7 +82,8 @@ export function VersionPage({ planId, number, navigate }) {
         )}
 
         <div className="layout">
-          <MarkdownDoc content={view.content} docRef={docRef} onSelect={onSelect} />
+          <MarkdownDoc content={view.content} docRef={docRef} onSelect={onSelect} files={view.files} />
+          <CodePreview docRef={docRef} />
 
           <aside className="sidebar">
             <div className="toolbar">

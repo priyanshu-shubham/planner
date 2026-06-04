@@ -43,7 +43,8 @@ func Serve(st store.Store, addr string) error {
 	mux.HandleFunc("POST /api/comments/{id}/keep", h.apiKeepComment)
 	mux.HandleFunc("POST /api/comments/{id}/replies", h.apiAddReply)
 	mux.HandleFunc("DELETE /api/comments/{id}", h.apiDeleteComment)
-	mux.HandleFunc("GET /api/", apiNotFound) // unknown /api GET -> JSON 404, not the SPA shell
+	mux.HandleFunc("GET /api/files/{sha}", h.apiFile) // referenced-file content, by sha
+	mux.HandleFunc("GET /api/", apiNotFound)          // unknown /api GET -> JSON 404, not the SPA shell
 
 	// Static assets (the built React bundle).
 	staticSub, err := fs.Sub(staticFS, "static")

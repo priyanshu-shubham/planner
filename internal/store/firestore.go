@@ -41,6 +41,24 @@ type versionDoc struct {
 	Number    int       `firestore:"number"`
 	Content   string    `firestore:"content"`
 	CreatedAt time.Time `firestore:"created_at"`
+	// Referenced-file list embedded on the version doc (tiny — well under 1 MiB).
+	// Files is the metadata returned to the view; FileSHAs is a parallel scalar
+	// array kept solely so the delete-sweep can find a blob's referrers via an
+	// array-contains query (an array-of-maps can't be queried by a single field).
+	Files    []fileRefDoc `firestore:"files"`
+	FileSHAs []string     `firestore:"file_shas"`
+}
+
+type fileRefDoc struct {
+	Path     string `firestore:"path"`
+	Language string `firestore:"language"`
+	SHA      string `firestore:"sha"`
+}
+
+// blobDoc is one content-addressed file body at file_blobs/{sha} (the SHA hex is
+// the doc id).
+type blobDoc struct {
+	Content string `firestore:"content"`
 }
 
 type commentDoc struct {
@@ -76,6 +94,22 @@ func (s *firestoreStore) plans() *firestore.CollectionRef    { return s.client.C
 func (s *firestoreStore) versions() *firestore.CollectionRef { return s.client.Collection("versions") }
 func (s *firestoreStore) comments() *firestore.CollectionRef { return s.client.Collection("comments") }
 func (s *firestoreStore) replies() *firestore.CollectionRef  { return s.client.Collection("replies") }
+func (s *firestoreStore) fileBlobs() *firestore.CollectionRef {
+	return s.client.Collection("file_blobs")
+}
+
+// fileDocs splits snapshots into the embedded file list (metadata) and the
+// parallel scalar sha array used by the sweep query. Both stay in sync on write.
+func fileDocs(files []FileSnapshot) ([]fileRefDoc, []string) {
+	refs := make([]fileRefDoc, 0, len(files))
+	shas := make([]string, 0, len(files))
+	for _, f := range files {
+		sha := fileSHA(f.Content)
+		refs = append(refs, fileRefDoc{Path: f.Path, Language: f.Language, SHA: sha})
+		shas = append(shas, sha)
+	}
+	return refs, shas
+}
 
 // mapErr translates a Firestore "document not found" into the shared ErrNotFound.
 func mapErr(err error) error {
@@ -89,13 +123,20 @@ func (s *firestoreStore) Close() error { return s.client.Close() }
 
 // ---- plans / versions ----
 
-func (s *firestoreStore) CreatePlan(title, content, project string) (Plan, Version, error) {
+func (s *firestoreStore) CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error) {
 	p := Plan{ID: id.New("pl"), Title: title, Status: PlanActive, Project: project, CreatedAt: now()}
 	v := Version{ID: id.New("v"), PlanID: p.ID, Number: 1, Content: content, CreatedAt: now()}
+	refs, shas := fileDocs(files)
 
 	bw := s.client.Batch()
 	bw.Set(s.plans().Doc(p.ID), planDoc{Title: p.Title, Status: p.Status, Project: p.Project, CreatedAt: p.CreatedAt})
-	bw.Set(s.versions().Doc(v.ID), versionDoc{PlanID: v.PlanID, Number: v.Number, Content: v.Content, CreatedAt: v.CreatedAt})
+	bw.Set(s.versions().Doc(v.ID), versionDoc{
+		PlanID: v.PlanID, Number: v.Number, Content: v.Content, CreatedAt: v.CreatedAt,
+		Files: refs, FileSHAs: shas,
+	})
+	for i, f := range files {
+		bw.Set(s.fileBlobs().Doc(shas[i]), blobDoc{Content: f.Content})
+	}
 	if _, err := bw.Commit(s.ctx); err != nil {
 		return Plan{}, Version{}, err
 	}
@@ -129,8 +170,9 @@ func (s *firestoreStore) SetPlanStatus(planID, status string) error {
 	return mapErr(err) // Update on a missing doc returns NotFound
 }
 
-func (s *firestoreStore) AddVersion(planID, content string) (Version, error) {
+func (s *firestoreStore) AddVersion(planID, content string, files []FileSnapshot) (Version, error) {
 	var v Version
+	refs, shas := fileDocs(files)
 	err := s.client.RunTransaction(s.ctx, func(ctx context.Context, tx *firestore.Transaction) error {
 		// All reads must precede writes in a Firestore transaction.
 		if _, err := tx.Get(s.plans().Doc(planID)); err != nil {
@@ -150,13 +192,53 @@ func (s *firestoreStore) AddVersion(planID, content string) (Version, error) {
 			next = vd.Number + 1
 		}
 		v = Version{ID: id.New("v"), PlanID: planID, Number: next, Content: content, CreatedAt: now()}
-		return tx.Set(s.versions().Doc(v.ID),
-			versionDoc{PlanID: v.PlanID, Number: v.Number, Content: v.Content, CreatedAt: v.CreatedAt})
+		if err := tx.Set(s.versions().Doc(v.ID), versionDoc{
+			PlanID: v.PlanID, Number: v.Number, Content: v.Content, CreatedAt: v.CreatedAt,
+			Files: refs, FileSHAs: shas,
+		}); err != nil {
+			return err
+		}
+		for i, f := range files {
+			if err := tx.Set(s.fileBlobs().Doc(shas[i]), blobDoc{Content: f.Content}); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return Version{}, err
 	}
 	return v, nil
+}
+
+// GetVersionFileList returns a version's referenced-file metadata (no content).
+func (s *firestoreStore) GetVersionFileList(versionID string) ([]FileRef, error) {
+	snap, err := s.versions().Doc(versionID).Get(s.ctx)
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	var vd versionDoc
+	if err := snap.DataTo(&vd); err != nil {
+		return nil, err
+	}
+	out := make([]FileRef, 0, len(vd.Files))
+	for _, f := range vd.Files {
+		out = append(out, FileRef{Path: f.Path, Language: f.Language, SHA: f.SHA})
+	}
+	return out, nil
+}
+
+// GetBlob returns a referenced file's content by its sha, or ErrNotFound.
+func (s *firestoreStore) GetBlob(sha string) (string, error) {
+	snap, err := s.fileBlobs().Doc(sha).Get(s.ctx)
+	if err != nil {
+		return "", mapErr(err)
+	}
+	var bd blobDoc
+	if err := snap.DataTo(&bd); err != nil {
+		return "", err
+	}
+	return bd.Content, nil
 }
 
 func (s *firestoreStore) GetVersion(planID string, number int) (Version, error) {
@@ -377,7 +459,9 @@ func (s *firestoreStore) DeletePlan(planID string) error {
 	}
 	cIter.Stop()
 
-	// Versions.
+	// Versions. Accumulate the union of their referenced-file shas as sweep
+	// candidates while queuing the version docs for deletion.
+	candidateSHAs := map[string]struct{}{}
 	vIter := s.versions().Where("plan_id", "==", planID).Documents(s.ctx)
 	for {
 		snap, err := vIter.Next()
@@ -388,13 +472,45 @@ func (s *firestoreStore) DeletePlan(planID string) error {
 			vIter.Stop()
 			return err
 		}
+		var vd versionDoc
+		if err := snap.DataTo(&vd); err != nil {
+			vIter.Stop()
+			return err
+		}
+		for _, sha := range vd.FileSHAs {
+			candidateSHAs[sha] = struct{}{}
+		}
 		bw.Delete(snap.Ref)
 	}
 	vIter.Stop()
 
 	bw.Delete(s.plans().Doc(planID))
-	_, err := bw.Commit(s.ctx)
-	return err
+	if _, err := bw.Commit(s.ctx); err != nil {
+		return err
+	}
+
+	// Sweep, post-commit: now that the plan's versions are gone, delete each
+	// candidate blob that no longer has a referrer. The link delete and blob
+	// delete are not atomic — a crash here leaves a harmless orphan blob (never
+	// served; reclaimed the next time a referring plan is deleted).
+	return s.sweepBlobs(candidateSHAs)
+}
+
+// sweepBlobs deletes each candidate blob that no version still references,
+// finding referrers via the scalar file_shas array-contains query.
+func (s *firestoreStore) sweepBlobs(candidateSHAs map[string]struct{}) error {
+	for sha := range candidateSHAs {
+		docs, err := s.versions().Where("file_shas", "array-contains", sha).Limit(1).Documents(s.ctx).GetAll()
+		if err != nil {
+			return err
+		}
+		if len(docs) == 0 {
+			if _, err := s.fileBlobs().Doc(sha).Delete(s.ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // deleteRepliesOf queues deletions for all replies on a comment into bw.

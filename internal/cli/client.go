@@ -11,6 +11,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"planner/internal/store"
 )
 
 // client is a thin HTTP client for the planner JSON API. The CLI is the agent's
@@ -113,16 +115,31 @@ func isConnErr(err error) bool {
 
 // ---- typed endpoint wrappers ----
 
-func (c *client) createPlan(title, content, project string) (apiCreated, error) {
+// createPlanReq / addVersionReq are the typed POST bodies. They carry the
+// referenced-file snapshots; the server hashes and content-addresses them.
+type createPlanReq struct {
+	Title   string               `json:"title"`
+	Content string               `json:"content"`
+	Project string               `json:"project"`
+	Files   []store.FileSnapshot `json:"files"`
+}
+
+type addVersionReq struct {
+	Content string               `json:"content"`
+	Files   []store.FileSnapshot `json:"files"`
+}
+
+func (c *client) createPlan(title, content, project string, files []store.FileSnapshot) (apiCreated, error) {
 	var out apiCreated
 	err := c.do(http.MethodPost, "/api/plans",
-		map[string]string{"title": title, "content": content, "project": project}, &out)
+		createPlanReq{Title: title, Content: content, Project: project, Files: files}, &out)
 	return out, err
 }
 
-func (c *client) addVersion(planID, content string) (apiCreated, error) {
+func (c *client) addVersion(planID, content string, files []store.FileSnapshot) (apiCreated, error) {
 	var out apiCreated
-	err := c.do(http.MethodPost, "/api/plans/"+planID+"/versions", map[string]string{"content": content}, &out)
+	err := c.do(http.MethodPost, "/api/plans/"+planID+"/versions",
+		addVersionReq{Content: content, Files: files}, &out)
 	return out, err
 }
 

@@ -26,6 +26,8 @@ export const api = {
   completePlan: (id) => req("POST", `/api/plans/${id}/complete`),
   reopenPlan: (id) => req("POST", `/api/plans/${id}/reopen`),
   versionView: (id, n) => req("GET", `/api/plans/${id}/v/${n}`),
+  // referenced-file content by sha (content-addressed, immutably cached)
+  file: (sha) => req("GET", `/api/files/${sha}`),
   addComment: (id, n, c) => req("POST", `/api/plans/${id}/v/${n}/comments`, c),
   resolveComment: (cid) => req("POST", `/api/comments/${cid}/resolve`),
   reopenComment: (cid) => req("POST", `/api/comments/${cid}/reopen`),

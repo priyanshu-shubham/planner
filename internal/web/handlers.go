@@ -48,6 +48,15 @@ type commentDTO struct {
 	Replies   []replyDTO `json:"replies"`
 }
 
+// fileRefDTO is one referenced-file metadata entry on the version view: enough
+// for the frontend to decorate a reference token and fetch its content by sha.
+// It carries no content — content is fetched lazily via GET /api/files/{sha}.
+type fileRefDTO struct {
+	Path     string `json:"path"`
+	Language string `json:"language"`
+	SHA      string `json:"sha"`
+}
+
 type versionViewDTO struct {
 	PlanID     string       `json:"plan_id"`
 	Title      string       `json:"title"`
@@ -58,6 +67,7 @@ type versionViewDTO struct {
 	Comments   []commentDTO `json:"comments"`
 	Carryover  []commentDTO `json:"carryover"`
 	PrevNumber int          `json:"prev_number"`
+	Files      []fileRefDTO `json:"files"` // referenced-file metadata (no content)
 }
 
 func toCommentDTO(c store.Comment) commentDTO {
@@ -104,9 +114,10 @@ func (h *handlers) apiListPlans(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 	var in struct {
-		Title   string `json:"title"`
-		Content string `json:"content"`
-		Project string `json:"project"`
+		Title   string               `json:"title"`
+		Content string               `json:"content"`
+		Project string               `json:"project"`
+		Files   []store.FileSnapshot `json:"files"`
 	}
 	if !readJSON(w, r, &in) {
 		return
@@ -118,7 +129,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 	if in.Project == "" {
 		in.Project = store.NoProject
 	}
-	p, v, err := h.st.CreatePlan(in.Title, in.Content, in.Project)
+	p, v, err := h.st.CreatePlan(in.Title, in.Content, in.Project, in.Files)
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -143,12 +154,13 @@ func (h *handlers) apiPlanMeta(w http.ResponseWriter, r *http.Request) {
 func (h *handlers) apiAddVersion(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	var in struct {
-		Content string `json:"content"`
+		Content string               `json:"content"`
+		Files   []store.FileSnapshot `json:"files"`
 	}
 	if !readJSON(w, r, &in) {
 		return
 	}
-	v, err := h.st.AddVersion(id, in.Content)
+	v, err := h.st.AddVersion(id, in.Content, in.Files)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -195,6 +207,11 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 		writeServerError(w, err)
 		return
 	}
+	fileList, err := h.st.GetVersionFileList(version.ID)
+	if err != nil {
+		writeServerError(w, err)
+		return
+	}
 
 	latest := plan.Versions[len(plan.Versions)-1]
 	var carryover []store.Comment
@@ -218,7 +235,17 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 		Comments:   toCommentDTOs(comments),
 		Carryover:  toCommentDTOs(carryover),
 		PrevNumber: prevNumber,
+		Files:      toFileRefDTOs(fileList),
 	})
+}
+
+// toFileRefDTOs converts store FileRefs to their wire DTOs (metadata only).
+func toFileRefDTOs(refs []store.FileRef) []fileRefDTO {
+	out := make([]fileRefDTO, 0, len(refs))
+	for _, f := range refs {
+		out = append(out, fileRefDTO{Path: f.Path, Language: f.Language, SHA: f.SHA})
+	}
+	return out
 }
 
 // ---- Comment endpoints ----
@@ -336,6 +363,44 @@ func (h *handlers) setPlanStatus(w http.ResponseWriter, r *http.Request, status 
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// ---- Referenced-file content (lazy, content-addressed) ----
+
+type fileContentDTO struct {
+	Content string `json:"content"`
+}
+
+// apiFile serves one referenced file's content by its sha. Because content is
+// addressed by hash it never changes, so the response is cached immutably and
+// dedupes across versions and plans (same sha → same URL → one browser-cache
+// entry). The sha must be lowercase hex; an unknown sha is a 404.
+func (h *handlers) apiFile(w http.ResponseWriter, r *http.Request) {
+	sha := r.PathValue("sha")
+	if !isHex(sha) {
+		writeJSONError(w, http.StatusBadRequest, "invalid sha")
+		return
+	}
+	content, err := h.st.GetBlob(sha)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	writeJSON(w, http.StatusOK, fileContentDTO{Content: content})
+}
+
+// isHex reports whether s is a non-empty string of lowercase hex digits.
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ---- Plan deletion (human-only; not exposed to the agent CLI) ----

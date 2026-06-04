@@ -49,11 +49,27 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
-// REF_RE matches a `file:line`-style code reference: a path-like token ending in
-// an extension (group 1), optionally followed by a line spec (`:120`, `:120-140`,
-// or comma groups `:51-61, 176-222`, captured as group 2). This is the JS twin of
-// the Go matcher in internal/cli/refs.go — keep the two patterns in sync.
-const REF_RE = /([\w./-]+\.\w+)(:\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*)?/g;
+// KNOWN_BASENAMES are extensionless filenames common enough to treat as refs.
+// Case-sensitive on purpose, so prose words like "license"/"todo" don't match.
+const KNOWN_BASENAMES =
+  "Makefile|makefile|GNUmakefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Procfile|Gemfile|Rakefile|Brewfile|Justfile|Caddyfile|LICENSE|LICENCE|README|CHANGELOG|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS|COPYING|INSTALL|TODO";
+
+const LINE_SPEC = ":\\d+(?:-\\d+)?(?:,\\s*\\d+(?:-\\d+)?)*";
+
+// REF_RE matches a `file:line`-style code reference. The path is captured in
+// group 1 (forms that stand on their own — extension, known extensionless
+// basename, or path-separated extensionless) or group 3 (a bare extensionless
+// token, which only counts when a line spec follows so prose words don't match).
+// The line spec is captured as group 2 (for group-1 paths) or group 4 (group-3).
+// This is the JS twin of refToken in internal/cli/refs.go — keep the two in sync.
+const REF_RE = new RegExp(
+  "([\\w./-]+\\.\\w+" +
+    "|(?:[\\w.-]+/)*(?:" + KNOWN_BASENAMES + ")\\b" +
+    "|[\\w.-]+(?:/[\\w.-]+)+)" +
+    "(" + LINE_SPEC + ")?" +
+    "|([\\w.-]+)(" + LINE_SPEC + ")",
+  "g",
+);
 
 // detectRefs finds every code reference in text, returning
 // [{ raw, path, ranges, index }] where ranges is a list of {start,end} (empty for
@@ -61,7 +77,9 @@ const REF_RE = /([\w./-]+\.\w+)(:\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*)?/g;
 export function detectRefs(text) {
   const out = [];
   for (const m of text.matchAll(REF_RE)) {
-    out.push({ raw: m[0], path: m[1], ranges: parseRanges(m[2] || ""), index: m.index });
+    const path = m[1] ?? m[3];
+    const spec = m[2] ?? m[4] ?? "";
+    out.push({ raw: m[0], path, ranges: parseRanges(spec), index: m.index });
   }
   return out;
 }

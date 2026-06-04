@@ -60,9 +60,29 @@ CREATE TABLE IF NOT EXISTS replies (
   created_at TIMESTAMP NOT NULL
 );
 
+-- Content-addressed store of referenced-file bodies: one row per unique body,
+-- keyed by the SHA-256 hex of its content, so identical files across versions or
+-- plans collapse to a single row.
+CREATE TABLE IF NOT EXISTS file_blobs (
+  sha256  TEXT PRIMARY KEY,
+  content TEXT NOT NULL
+);
+
+-- Per-version list of the files a version references: each entry points a
+-- (version, path) at a blob. The blob FK ties the list to the content store.
+CREATE TABLE IF NOT EXISTS version_files (
+  version_id TEXT NOT NULL REFERENCES versions(id),
+  path       TEXT NOT NULL,
+  language   TEXT NOT NULL,
+  sha256     TEXT NOT NULL REFERENCES file_blobs(sha256),
+  PRIMARY KEY(version_id, path)
+);
+
 CREATE INDEX IF NOT EXISTS idx_versions_plan ON versions(plan_id);
 CREATE INDEX IF NOT EXISTS idx_comments_version ON comments(version_id);
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
+CREATE INDEX IF NOT EXISTS idx_version_files_version ON version_files(version_id);
+CREATE INDEX IF NOT EXISTS idx_version_files_sha ON version_files(sha256);
 `
 
 // OpenSQLite opens (creating if needed) the SQLite database at path and applies
@@ -155,8 +175,9 @@ func (s *sqliteStore) Close() error {
 
 func now() time.Time { return time.Now().UTC() }
 
-// CreatePlan inserts a new plan and its first version, returning both.
-func (s *sqliteStore) CreatePlan(title, content, project string) (Plan, Version, error) {
+// CreatePlan inserts a new plan and its first version, returning both. Any
+// referenced-file snapshots are stored content-addressed alongside the version.
+func (s *sqliteStore) CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Plan{}, Version{}, err
@@ -173,14 +194,34 @@ func (s *sqliteStore) CreatePlan(title, content, project string) (Plan, Version,
 		v.ID, v.PlanID, v.Number, v.Content, v.CreatedAt); err != nil {
 		return Plan{}, Version{}, err
 	}
+	if err := insertFiles(tx, v.ID, files); err != nil {
+		return Plan{}, Version{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Plan{}, Version{}, err
 	}
 	return p, v, nil
 }
 
-// AddVersion appends a new immutable version to an existing plan.
-func (s *sqliteStore) AddVersion(planID, content string) (Version, error) {
+// insertFiles writes each snapshot's body as a content-addressed blob (insert if
+// absent) plus a per-version file-list entry, inside the caller's transaction.
+func insertFiles(tx *sql.Tx, versionID string, files []FileSnapshot) error {
+	for _, f := range files {
+		sha := fileSHA(f.Content)
+		if _, err := tx.Exec(`INSERT OR IGNORE INTO file_blobs(sha256,content) VALUES(?,?)`, sha, f.Content); err != nil {
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO version_files(version_id,path,language,sha256) VALUES(?,?,?,?)`,
+			versionID, f.Path, f.Language, sha); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// AddVersion appends a new immutable version to an existing plan, storing any
+// referenced-file snapshots content-addressed alongside it.
+func (s *sqliteStore) AddVersion(planID, content string, files []FileSnapshot) (Version, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Version{}, err
@@ -204,10 +245,42 @@ func (s *sqliteStore) AddVersion(planID, content string) (Version, error) {
 		v.ID, v.PlanID, v.Number, v.Content, v.CreatedAt); err != nil {
 		return Version{}, err
 	}
+	if err := insertFiles(tx, v.ID, files); err != nil {
+		return Version{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return Version{}, err
 	}
 	return v, nil
+}
+
+// GetVersionFileList returns a version's referenced-file metadata (no content),
+// ordered by path.
+func (s *sqliteStore) GetVersionFileList(versionID string) ([]FileRef, error) {
+	rows, err := s.db.Query(`SELECT path,language,sha256 FROM version_files WHERE version_id=? ORDER BY path`, versionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FileRef
+	for rows.Next() {
+		var f FileRef
+		if err := rows.Scan(&f.Path, &f.Language, &f.SHA); err != nil {
+			return nil, err
+		}
+		out = append(out, f)
+	}
+	return out, rows.Err()
+}
+
+// GetBlob returns a referenced file's content by its sha, or ErrNotFound.
+func (s *sqliteStore) GetBlob(sha string) (string, error) {
+	var content string
+	err := s.db.QueryRow(`SELECT content FROM file_blobs WHERE sha256=?`, sha).Scan(&content)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return content, err
 }
 
 // GetPlan returns a plan by id with its version numbers (ascending) filled in.
@@ -351,6 +424,23 @@ func (s *sqliteStore) DeletePlan(planID string) error {
 		(SELECT id FROM versions WHERE plan_id=?)`, planID); err != nil {
 		return err
 	}
+	// Drop this plan's version → file links, then sweep any blob those links
+	// pointed at that no longer has a referrer. The guarded delete leaves blobs
+	// still referenced by another plan's version untouched.
+	candidateSHAs, err := planBlobSHAs(tx, planID)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM version_files WHERE version_id IN
+		(SELECT id FROM versions WHERE plan_id=?)`, planID); err != nil {
+		return err
+	}
+	for _, sha := range candidateSHAs {
+		if _, err := tx.Exec(`DELETE FROM file_blobs WHERE sha256=?
+			AND NOT EXISTS (SELECT 1 FROM version_files WHERE sha256=?)`, sha, sha); err != nil {
+			return err
+		}
+	}
 	if _, err := tx.Exec(`DELETE FROM versions WHERE plan_id=?`, planID); err != nil {
 		return err
 	}
@@ -362,6 +452,27 @@ func (s *sqliteStore) DeletePlan(planID string) error {
 		return ErrNotFound
 	}
 	return tx.Commit()
+}
+
+// planBlobSHAs returns the distinct blob shas referenced by any of a plan's
+// versions — the sweep candidates collected before the plan's file links are
+// deleted.
+func planBlobSHAs(tx *sql.Tx, planID string) ([]string, error) {
+	rows, err := tx.Query(`SELECT DISTINCT sha256 FROM version_files
+		WHERE version_id IN (SELECT id FROM versions WHERE plan_id=?)`, planID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var sha string
+		if err := rows.Scan(&sha); err != nil {
+			return nil, err
+		}
+		out = append(out, sha)
+	}
+	return out, rows.Err()
 }
 
 // AddReply appends a reply to a comment's thread.

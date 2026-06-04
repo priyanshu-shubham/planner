@@ -18,11 +18,19 @@ var ErrNotFound = errors.New("not found")
 type Store interface {
 	// Plans / versions.
 	ListPlans() ([]PlanSummary, error)
-	CreatePlan(title, content, project string) (Plan, Version, error)
+	CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error)
 	GetPlan(planID string) (Plan, error) // Plan.Versions filled, ascending
 	SetPlanStatus(planID, status string) error
-	AddVersion(planID, content string) (Version, error)
+	AddVersion(planID, content string, files []FileSnapshot) (Version, error)
 	GetVersion(planID string, number int) (Version, error)
+
+	// Referenced-file snapshots (content-addressed). The store hashes each
+	// snapshot's body server-side, stores one blob per unique body, and keeps a
+	// per-version file list of (path, language, sha). GetVersionFileList returns
+	// the metadata for a version (no content); GetBlob returns one file's content
+	// by sha (ErrNotFound for an unknown sha).
+	GetVersionFileList(versionID string) ([]FileRef, error)
+	GetBlob(sha string) (string, error)
 
 	// Comments / replies.
 	ListComments(versionID string, openOnly bool) ([]Comment, error) // Replies attached

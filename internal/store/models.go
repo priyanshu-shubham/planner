@@ -27,6 +27,25 @@ type Version struct {
 	CreatedAt time.Time
 }
 
+// FileSnapshot is a whole referenced file captured by the CLI at post time and
+// posted to the server (the wire + input type). The server splits it into a
+// content-addressed blob plus a per-version FileRef; content-addressing details
+// (SHA computation) are server-side internals and never appear on this type.
+type FileSnapshot struct {
+	Path     string `json:"path"`     // path as written in the plan, relative to the project root
+	Language string `json:"language"` // hljs language id for syntax highlighting ("" if unknown)
+	Content  string `json:"content"`  // the whole file body (captured only for files < 50 KB)
+}
+
+// FileRef is one entry in a version's file list: the metadata the frontend needs
+// to decorate a reference token and fetch its content by SHA. It carries no
+// content — content is fetched lazily via GetBlob.
+type FileRef struct {
+	Path     string
+	Language string
+	SHA      string // lowercase hex SHA-256 of the file body; the blob key
+}
+
 // Comment is human feedback attached to a specific version. A line_start of 0
 // means the comment applies to the whole file rather than a line range. Quote
 // is the exact text the reviewer selected in the rendered markdown (empty for

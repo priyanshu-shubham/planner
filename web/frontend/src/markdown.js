@@ -30,6 +30,61 @@ const md = new MarkdownIt({
   },
 });
 
+// highlightCode returns syntax-highlighted HTML for a snippet, reusing the same
+// hljs instance the renderer uses. Unknown/absent languages fall back to escaped
+// plain text. Used by the code-reference preview popover.
+export function highlightCode(code, lang) {
+  if (lang && hljs.getLanguage(lang)) {
+    try {
+      return hljs.highlight(code, { language: lang }).value;
+    } catch (_) {}
+  }
+  return escapeHtml(code);
+}
+
+function escapeHtml(s) {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+// REF_RE matches a `file:line`-style code reference: a path-like token ending in
+// an extension (group 1), optionally followed by a line spec (`:120`, `:120-140`,
+// or comma groups `:51-61, 176-222`, captured as group 2). This is the JS twin of
+// the Go matcher in internal/cli/refs.go — keep the two patterns in sync.
+const REF_RE = /([\w./-]+\.\w+)(:\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*)?/g;
+
+// detectRefs finds every code reference in text, returning
+// [{ raw, path, ranges, index }] where ranges is a list of {start,end} (empty for
+// a bare path) and index is the match offset in text (for DOM splitting).
+export function detectRefs(text) {
+  const out = [];
+  for (const m of text.matchAll(REF_RE)) {
+    out.push({ raw: m[0], path: m[1], ranges: parseRanges(m[2] || ""), index: m.index });
+  }
+  return out;
+}
+
+// parseRanges turns a line spec (leading ":") like ":51-61, 176-222" into
+// [{start:51,end:61},{start:176,end:222}]. A single line ":120" becomes
+// [{start:120,end:120}]; an empty spec yields [].
+function parseRanges(spec) {
+  if (!spec) return [];
+  const ranges = [];
+  for (const part of spec.slice(1).split(",")) {
+    const t = part.trim();
+    if (!t) continue;
+    const dash = t.indexOf("-");
+    if (dash >= 0) {
+      ranges.push({ start: Number(t.slice(0, dash)), end: Number(t.slice(dash + 1)) });
+    } else {
+      ranges.push({ start: Number(t), end: Number(t) });
+    }
+  }
+  return ranges;
+}
+
 // renderToBlocks returns [{ html, lineStart, lineEnd }] for the given markdown.
 export function renderToBlocks(src) {
   const env = {};

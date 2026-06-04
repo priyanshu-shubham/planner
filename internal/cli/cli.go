@@ -337,6 +337,9 @@ func cmdComments(args []string) error {
 			fmt.Printf("      > %s\n", truncate(c.Quote, 80))
 		}
 		fmt.Printf("      %s\n", indentBody(c.Body))
+		for _, rep := range c.Replies {
+			fmt.Printf("      ↳ %s: %s\n", rep.Author, indentReply(rep.Body))
+		}
 	}
 	return nil
 }
@@ -391,6 +394,12 @@ func statusLabel(s string) string {
 
 func indentBody(b string) string {
 	return strings.ReplaceAll(strings.TrimRight(b, "\n"), "\n", "\n      ")
+}
+
+// indentReply aligns a reply's continuation lines under its first line, past the
+// "      ↳ author: " prefix.
+func indentReply(b string) string {
+	return strings.ReplaceAll(strings.TrimRight(b, "\n"), "\n", "\n        ")
 }
 
 func truncate(s string, n int) string {

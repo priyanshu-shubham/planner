@@ -25,15 +25,23 @@ func newClient(base string) *client {
 	return &client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 30 * time.Second}}
 }
 
+// apiReply mirrors the server's replyDTO.
+type apiReply struct {
+	ID     string `json:"id"`
+	Author string `json:"author"`
+	Body   string `json:"body"`
+}
+
 // apiComment mirrors the server's commentDTO.
 type apiComment struct {
-	ID        string `json:"id"`
-	LineStart int    `json:"line_start"`
-	LineEnd   int    `json:"line_end"`
-	WholeFile bool   `json:"whole_file"`
-	Quote     string `json:"quote"`
-	Body      string `json:"body"`
-	Status    string `json:"status"`
+	ID        string     `json:"id"`
+	LineStart int        `json:"line_start"`
+	LineEnd   int        `json:"line_end"`
+	WholeFile bool       `json:"whole_file"`
+	Quote     string     `json:"quote"`
+	Body      string     `json:"body"`
+	Status    string     `json:"status"`
+	Replies   []apiReply `json:"replies"`
 }
 
 type apiVersionView struct {

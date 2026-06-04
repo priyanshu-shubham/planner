@@ -11,6 +11,16 @@ const md = new MarkdownIt({
   linkify: true,
   typographer: true,
   highlight(str, lang) {
+    if (lang === "mermaid") {
+      // Hand the raw diagram source to mermaid (rendered client-side after
+      // mount). markdown-it returns a highlight result starting with `<pre`
+      // verbatim, skipping its own <pre><code> wrapper, so the source lands as
+      // the element's textContent. Convert literal `\n` to <br/> to work around
+      // mermaid v11's regression that renders `\n` in node labels literally
+      // (mermaid-js/mermaid#1766).
+      const src = str.replace(/\\n/g, "<br/>");
+      return `<pre class="mermaid">${md.utils.escapeHtml(src)}</pre>`;
+    }
     if (lang && hljs.getLanguage(lang)) {
       try {
         return hljs.highlight(str, { language: lang }).value;

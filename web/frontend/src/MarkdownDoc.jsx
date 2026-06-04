@@ -1,10 +1,21 @@
-import { useMemo } from "react";
+import { useEffect, useMemo } from "react";
 import { renderToBlocks } from "./markdown.js";
 
 // Renders markdown wide, and turns a text selection into a comment anchor:
 // the selected text (quote) plus the source line range of the block(s) it spans.
 export function MarkdownDoc({ content, docRef, onSelect }) {
   const blocks = useMemo(() => renderToBlocks(content), [content]);
+
+  // After blocks render, draw any mermaid diagrams. Keyed on [blocks] so it only
+  // runs when the parsed content changes — not on selection/hover re-renders. The
+  // querySelector guard means mermaid.js (and the library) are fetched only when
+  // a diagram is actually present.
+  useEffect(() => {
+    const el = docRef.current;
+    if (el && el.querySelector("pre.mermaid:not([data-processed])")) {
+      import("./mermaid.js").then((m) => m.renderMermaid(el));
+    }
+  }, [blocks]);
 
   function handleMouseUp() {
     const sel = window.getSelection();

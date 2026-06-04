@@ -105,6 +105,16 @@ article.doc.markdown-body pre {
 article.doc.markdown-body blockquote { color: var(--muted); }
 article.doc.markdown-body img { border-radius: 8px; }
 
+/* mermaid diagrams render into <pre class="mermaid"> as inline SVG; drop the
+   code-block chrome and center the figure. */
+article.doc.markdown-body pre.mermaid {
+  border: none;
+  background: transparent;
+  text-align: center;
+  padding: 8px 0;
+}
+pre.mermaid svg { max-width: 100%; height: auto; }
+
 .md-block { border-radius: 6px; scroll-margin-top: 84px; }
 .md-block.flash { animation: flash 1.3s ease-out; }
 @keyframes flash {

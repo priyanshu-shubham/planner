@@ -15,13 +15,36 @@ import (
 // any single Firestore blob doc well under the 1 MiB limit.
 const maxSnapshotBytes = 50 * 1024
 
+// knownBasenames are extensionless filenames common enough to treat as refs even
+// though they have no extension to match on. Case-sensitive on purpose, so prose
+// words like "license" or "todo" don't match.
+const knownBasenames = `Makefile|makefile|GNUmakefile|Dockerfile|Containerfile|Jenkinsfile|Vagrantfile|Procfile|Gemfile|Rakefile|Brewfile|Justfile|Caddyfile|LICENSE|LICENCE|README|CHANGELOG|NOTICE|AUTHORS|CONTRIBUTORS|CODEOWNERS|COPYING|INSTALL|TODO`
+
+// refLineSpec matches an optional trailing line spec: `:120`, `:120-140`, or
+// comma groups `:51-61, 176-222`. The ranges are discarded by the CLI (only the
+// path drives storage); the frontend re-parses them for display.
+const refLineSpec = `:\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*`
+
 // refToken matches a `file:line`-style code reference in plan markdown. The path
-// (group 1) is a path-like token ending in an extension; an optional line spec
-// (`:120`, `:120-140`, or comma groups `:51-61, 176-222`) is consumed so a bare
-// path doesn't shadow a `:line` form, but the ranges are discarded — only the
-// path drives storage. This pattern is the Go twin of detectRefs() in the
-// frontend's markdown.js; keep the two in sync.
-var refToken = regexp.MustCompile(`([\w./-]+\.\w+)(?::\d+(?:-\d+)?(?:,\s*\d+(?:-\d+)?)*)?`)
+// is captured in group 1 (forms that stand on their own) or group 3 (a bare
+// extensionless token, which only counts when a line spec follows so prose words
+// don't match). The accepted path forms are:
+//   - anything ending in an extension          (internal/web/handlers.go)
+//   - a known extensionless basename           (Makefile, build/Dockerfile)
+//   - a path-separated extensionless token     (scripts/deploy)
+//   - a bare extensionless token + line spec   (deploy:12)
+//
+// This pattern is the Go twin of REF_RE/detectRefs() in the frontend's
+// markdown.js; keep the two in sync. Over-matching of path-like prose is expected
+// and absorbed by the snapshot-presence filter (a token whose file wasn't
+// snapshotted never decorates).
+var refToken = regexp.MustCompile(
+	`(` +
+		`[\w./-]+\.\w+` + // with an extension
+		`|(?:[\w.-]+/)*(?:` + knownBasenames + `)\b` + // known extensionless basename, optional dir prefix
+		`|[\w.-]+(?:/[\w.-]+)+` + // path-separated extensionless
+		`)(` + refLineSpec + `)?` +
+		`|(` + `[\w.-]+` + `)(` + refLineSpec + `)`) // bare extensionless, requires a line spec
 
 // snapshotFiles scans plan markdown for code references and returns a deduped
 // (by path) snapshot of each referenced file that resolves inside root, is a
@@ -36,7 +59,10 @@ func snapshotFiles(root, content string) []store.FileSnapshot {
 	var out []store.FileSnapshot
 	seen := map[string]bool{}
 	for _, m := range refToken.FindAllStringSubmatch(content, -1) {
-		path := m[1]
+		path := m[1] // group 1 (standalone forms) or group 3 (bare + line spec)
+		if path == "" {
+			path = m[3]
+		}
 		if seen[path] {
 			continue
 		}

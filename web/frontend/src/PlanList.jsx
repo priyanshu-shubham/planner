@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
-import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, RepoIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
+import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, GitBranchIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
 
 // basename returns the last path segment, used to label a plan by its project —
 // a folder's name (/home/me/planner -> planner) or a repo identity's name
@@ -76,6 +76,15 @@ export function PlanList({ navigate }) {
     return [...set].sort((a, b) => basename(a).localeCompare(basename(b)));
   }, [plans]);
 
+  // When two distinct project values share a basename (e.g. a folder path and a
+  // git identity for the same repo), label them with their full value so the
+  // dropdown entries are tellable apart instead of showing the name twice.
+  const projectLabels = useMemo(() => {
+    const counts = {};
+    for (const p of projects) counts[basename(p)] = (counts[basename(p)] || 0) + 1;
+    return Object.fromEntries(projects.map((p) => [p, counts[basename(p)] > 1 ? p : basename(p)]));
+  }, [projects]);
+
   const shown = (plans || []).filter((p) => {
     if (statusFilter !== "all" && (p.status || "active") !== statusFilter) return false;
     if (projectFilter !== "all" && (p.project || "No Project") !== projectFilter) return false;
@@ -103,7 +112,7 @@ export function PlanList({ navigate }) {
             <select value={projectFilter} onChange={(e) => setProjectFilter(e.target.value)}>
               <option value="all">All</option>
               {projects.map((p) => (
-                <option key={p} value={p}>{basename(p)}</option>
+                <option key={p} value={p}>{projectLabels[p]}</option>
               ))}
             </select>
           </label>
@@ -145,7 +154,7 @@ export function PlanList({ navigate }) {
                     title={`${p.project || "No Project"} — click to change project`}
                     onClick={(e) => { e.stopPropagation(); editProject(p); }}
                   >
-                    {isRepoId(p.project) ? <RepoIcon /> : <FolderIcon />}<span>{basename(p.project)}</span>
+                    {isRepoId(p.project) ? <GitBranchIcon /> : <FolderIcon />}<span>{basename(p.project)}</span>
                   </button>
                 </div>
                 {p.open_comments > 0 && (

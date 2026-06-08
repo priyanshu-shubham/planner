@@ -337,7 +337,7 @@ button.danger:hover { background: #ffebe9; }
 .plan-list li.clickable { cursor: pointer; }
 .plan-list .title { font-weight: 600; font-size: 15px; flex: 1; color: #1f2328; }
 .badge { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); }
-.badge.open { color: #1a7f37; border-color: #add5b6; background: #eafaef; }
+.badge.open { color: #1a7f37; border-color: #add5b6; background: #eafaef; padding: 1px 6px; min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
 
 /* ---- plan-list: completion toggle + stacked title/project ---- */

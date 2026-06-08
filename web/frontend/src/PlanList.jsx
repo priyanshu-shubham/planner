@@ -123,8 +123,12 @@ export function PlanList({ navigate }) {
                     <FolderIcon />{basename(p.project)}
                   </span>
                 </div>
+                {p.open_comments > 0 && (
+                  <span className="badge open" title={`${p.open_comments} open comment${p.open_comments === 1 ? "" : "s"}`}>
+                    {p.open_comments}
+                  </span>
+                )}
                 <span className="badge">v{p.latest_version}</span>
-                {p.open_comments > 0 && <span className="badge open">{p.open_comments} open</span>}
                 <span className="mono">{p.id}</span>
                 {p.status === "active" && (
                   <button

@@ -354,7 +354,12 @@ button.danger:hover { background: #ffebe9; }
 .plan-project {
   display: inline-flex; align-items: center; gap: 5px;
   font-size: 12px; color: var(--muted);
+  align-self: flex-start; max-width: 100%;
+  background: none; border: 0; padding: 2px 4px; margin-left: -4px;
+  font: inherit; cursor: pointer; border-radius: 5px;
 }
+button.plan-project:hover { background: var(--bg); color: var(--accent); }
+.plan-project span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .plan-project svg { flex: none; opacity: .8; }
 
 /* Completed plans recede visually; the green check carries the status. */

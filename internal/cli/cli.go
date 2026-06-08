@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -106,12 +107,102 @@ func defaultServer() string {
 	return "http://localhost:8080"
 }
 
-// currentProject returns the absolute working directory the plan is created
-// from, which the server records so plans can be grouped by project. An empty
-// string (when the cwd can't be determined) is normalized server-side.
-func currentProject() string {
+// workingDir is the absolute directory the CLI runs in. Referenced-file paths in
+// a plan are written relative to it, so it is the root snapshotFiles reads from.
+// Distinct from resolveProject: the snapshot root is always the real cwd, even
+// when the plan's recorded project identity is a git remote or another checkout.
+func workingDir() string {
 	wd, _ := os.Getwd()
 	return wd
+}
+
+// resolveProject returns the identity the server records so plans group sensibly
+// across a repo's worktrees and clones. Precedence: the origin remote (constant
+// per repo); else the current branch's tracking remote (covers repos whose
+// canonical remote isn't named "origin"); else the main checkout shared by all
+// linked worktrees (collapses worktrees even with no remote); else the bare cwd.
+// Remote URLs are normalized to host/owner/repo. Any git signal beats the cwd so
+// worktrees of one repo don't split into separate projects.
+func resolveProject() string {
+	wd := workingDir()
+	if url, ok := git(wd, "config", "--get", "remote.origin.url"); ok && url != "" {
+		return normalizeRemoteURL(url)
+	}
+	if branch, ok := git(wd, "branch", "--show-current"); ok && branch != "" {
+		if remote, ok := git(wd, "config", "--get", "branch."+branch+".remote"); ok && remote != "" {
+			if url, ok := git(wd, "config", "--get", "remote."+remote+".url"); ok && url != "" {
+				return normalizeRemoteURL(url)
+			}
+		}
+	}
+	if dir, ok := git(wd, "rev-parse", "--git-common-dir"); ok && dir != "" {
+		// --git-common-dir is the *shared* .git (the main repo's) for every
+		// linked worktree, but it may be relative to wd. Its parent is the main
+		// checkout root.
+		if !filepath.IsAbs(dir) {
+			dir = filepath.Join(wd, dir)
+		}
+		return filepath.Dir(filepath.Clean(dir))
+	}
+	return wd
+}
+
+// git runs `git -C dir args...` and returns its trimmed stdout. ok is false when
+// git is absent, dir isn't a repo, or the command otherwise fails — callers fall
+// through to the next identity source.
+func git(dir string, args ...string) (string, bool) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).Output()
+	if err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(string(out)), true
+}
+
+// normalizeRemoteURL collapses the assorted git remote URL forms to a stable
+// host/owner/repo identity, so the same repo reached over https or ssh (or with
+// a trailing slash or .git suffix) maps to one project. Examples:
+//
+//	https://github.com/me/planner.git    -> github.com/me/planner
+//	git@github.com:me/planner.git        -> github.com/me/planner
+//	ssh://git@github.com:22/me/planner   -> github.com/me/planner
+func normalizeRemoteURL(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if i := strings.Index(s, "://"); i >= 0 { // drop scheme (https/ssh/git/...)
+		s = s[i+3:]
+	}
+	if i := strings.LastIndex(s, "@"); i >= 0 { // drop userinfo (e.g. git@)
+		s = s[i+1:]
+	}
+	// Split host from path. Normal URLs use '/', scp-like syntax uses
+	// host:owner/repo, and ssh:// may carry host:port — turn the first
+	// separator into '/' and drop a numeric port.
+	if i := strings.IndexAny(s, ":/"); i >= 0 {
+		host, rest := s[:i], s[i+1:]
+		if s[i] == ':' {
+			if j := strings.IndexByte(rest, '/'); j >= 0 && isAllDigits(rest[:j]) {
+				rest = rest[j+1:]
+			}
+		}
+		s = host + "/" + rest
+	}
+	s = strings.TrimRight(s, "/")
+	s = strings.TrimSuffix(s, ".git")
+	return strings.TrimRight(s, "/")
+}
+
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // readContent returns the markdown body from --file or stdin.
@@ -240,8 +331,8 @@ func cmdCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	project := currentProject()
-	files := snapshotFiles(project, content)
+	project := resolveProject()
+	files := snapshotFiles(workingDir(), content)
 	created, err := newClient(*server).createPlan(*title, content, project, files)
 	if err != nil {
 		return err
@@ -265,7 +356,7 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
-	files := snapshotFiles(currentProject(), content)
+	files := snapshotFiles(workingDir(), content)
 	created, err := newClient(*server).addVersion(planID, content, files)
 	if err != nil {
 		return err

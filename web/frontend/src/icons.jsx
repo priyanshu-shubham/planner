@@ -28,6 +28,20 @@ export function FolderIcon() {
   );
 }
 
+export function RepoIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M4 1.75h8.25c.55 0 1 .45 1 1v10.5l-3-1.6-3 1.6V1.75zM4 1.75c-.97 0-1.75.78-1.75 1.75v8.5c0 .97.78 1.75 1.75 1.75h2.25"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinejoin="round"
+        strokeLinecap="round"
+      />
+    </svg>
+  );
+}
+
 export function ArchiveBoxIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">

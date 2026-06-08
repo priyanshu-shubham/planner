@@ -1,14 +1,22 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
-import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
+import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, RepoIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
 
-// basename returns the last path segment, used to label a plan by its origin
-// folder. "No Project" (and any non-path value) passes through unchanged.
+// basename returns the last path segment, used to label a plan by its project —
+// a folder's name (/home/me/planner -> planner) or a repo identity's name
+// (github.com/me/planner -> planner). "No Project" passes through unchanged.
 function basename(p) {
   if (!p) return "No Project";
   const parts = p.split("/").filter(Boolean);
   return parts.length ? parts[parts.length - 1] : p;
+}
+
+// isRepoId distinguishes the two project value shapes: a git remote identity
+// (host/owner/repo) vs. a filesystem path (starts with "/"). Drives which icon
+// labels the plan. "No Project" is neither.
+function isRepoId(p) {
+  return !!p && p !== "No Project" && !p.startsWith("/");
 }
 
 export function PlanList({ navigate }) {
@@ -44,6 +52,18 @@ export function PlanList({ navigate }) {
   async function toggleStash(p) {
     try {
       await api.setPlanStatus(p.id, p.status === "stashed" ? "active" : "stashed");
+      load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  async function editProject(p) {
+    const next = prompt("Project for this plan (a folder path or repo identity; blank clears it):", p.project || "");
+    if (next === null) return; // cancelled
+    if (next.trim() === (p.project || "")) return; // unchanged
+    try {
+      await api.setPlanProject(p.id, next.trim());
       load();
     } catch (e) {
       setErr(e.message);
@@ -119,9 +139,14 @@ export function PlanList({ navigate }) {
                   <a className="title" href={`/plans/${p.id}`} onClick={(e) => { e.preventDefault(); e.stopPropagation(); navigate(`/plans/${p.id}`); }}>
                     {p.title}
                   </a>
-                  <span className="plan-project" title={p.project || "No Project"}>
-                    <FolderIcon />{basename(p.project)}
-                  </span>
+                  <button
+                    type="button"
+                    className="plan-project"
+                    title={`${p.project || "No Project"} — click to change project`}
+                    onClick={(e) => { e.stopPropagation(); editProject(p); }}
+                  >
+                    {isRepoId(p.project) ? <RepoIcon /> : <FolderIcon />}<span>{basename(p.project)}</span>
+                  </button>
                 </div>
                 {p.open_comments > 0 && (
                   <span className="badge open" title={`${p.open_comments} open comment${p.open_comments === 1 ? "" : "s"}`}>

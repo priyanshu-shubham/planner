@@ -24,6 +24,7 @@ export const api = {
   planMeta: (id) => req("GET", `/api/plans/${id}`),
   deletePlan: (id) => req("DELETE", `/api/plans/${id}`),
   setPlanStatus: (id, status) => req("POST", `/api/plans/${id}/status`, { status }),
+  setPlanProject: (id, project) => req("POST", `/api/plans/${id}/project`, { project }),
   versionView: (id, n) => req("GET", `/api/plans/${id}/v/${n}`),
   // referenced-file content by sha (content-addressed, immutably cached)
   file: (sha) => req("GET", `/api/files/${sha}`),

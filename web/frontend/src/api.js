@@ -23,8 +23,7 @@ export const api = {
   listPlans: () => req("GET", "/api/plans"),
   planMeta: (id) => req("GET", `/api/plans/${id}`),
   deletePlan: (id) => req("DELETE", `/api/plans/${id}`),
-  completePlan: (id) => req("POST", `/api/plans/${id}/complete`),
-  reopenPlan: (id) => req("POST", `/api/plans/${id}/reopen`),
+  setPlanStatus: (id, status) => req("POST", `/api/plans/${id}/status`, { status }),
   versionView: (id, n) => req("GET", `/api/plans/${id}/v/${n}`),
   // referenced-file content by sha (content-addressed, immutably cached)
   file: (sha) => req("GET", `/api/files/${sha}`),

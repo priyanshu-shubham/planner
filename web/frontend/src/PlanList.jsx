@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
-import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon } from "./icons.jsx";
+import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
 
 // basename returns the last path segment, used to label a plan by its origin
 // folder. "No Project" (and any non-path value) passes through unchanged.
@@ -14,7 +14,7 @@ function basename(p) {
 export function PlanList({ navigate }) {
   const [plans, setPlans] = useState(null);
   const [err, setErr] = useState(null);
-  const [statusFilter, setStatusFilter] = useState("active"); // all | active | completed
+  const [statusFilter, setStatusFilter] = useState("active"); // all | active | completed | stashed
   const [projectFilter, setProjectFilter] = useState("all"); // all | <project path>
 
   function load() {
@@ -34,8 +34,16 @@ export function PlanList({ navigate }) {
 
   async function toggleComplete(p) {
     try {
-      if (p.status === "completed") await api.reopenPlan(p.id);
-      else await api.completePlan(p.id);
+      await api.setPlanStatus(p.id, p.status === "completed" ? "active" : "completed");
+      load();
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
+  async function toggleStash(p) {
+    try {
+      await api.setPlanStatus(p.id, p.status === "stashed" ? "active" : "stashed");
       load();
     } catch (e) {
       setErr(e.message);
@@ -67,6 +75,7 @@ export function PlanList({ navigate }) {
               <option value="all">All</option>
               <option value="active">Active</option>
               <option value="completed">Completed</option>
+              <option value="stashed">Stashed</option>
             </select>
           </label>
           <label className="filter">
@@ -90,10 +99,11 @@ export function PlanList({ navigate }) {
           <ul className="plan-list">
             {shown.map((p) => {
               const completed = p.status === "completed";
+              const stashed = p.status === "stashed";
               return (
               <li
                 key={p.id}
-                className={`clickable ${completed ? "completed" : ""}`}
+                className={`clickable ${completed ? "completed" : ""} ${stashed ? "stashed" : ""}`}
                 onClick={() => navigate(`/plans/${p.id}`)}
               >
                 <button
@@ -116,6 +126,26 @@ export function PlanList({ navigate }) {
                 <span className="badge">v{p.latest_version}</span>
                 {p.open_comments > 0 && <span className="badge open">{p.open_comments} open</span>}
                 <span className="mono">{p.id}</span>
+                {p.status === "active" && (
+                  <button
+                    className="icon-btn"
+                    title="Stash plan"
+                    aria-label="Stash plan"
+                    onClick={(e) => { e.stopPropagation(); toggleStash(p); }}
+                  >
+                    <ArchiveBoxIcon />
+                  </button>
+                )}
+                {stashed && (
+                  <button
+                    className="icon-btn"
+                    title="Unstash plan"
+                    aria-label="Unstash plan"
+                    onClick={(e) => { e.stopPropagation(); toggleStash(p); }}
+                  >
+                    <UnarchiveIcon />
+                  </button>
+                )}
                 <button
                   className="icon-btn danger"
                   title="Delete plan"

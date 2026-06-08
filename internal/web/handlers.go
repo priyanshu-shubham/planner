@@ -348,17 +348,20 @@ func (h *handlers) apiAddReply(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, replyDTO{ID: rep.ID, Author: rep.Author, Body: rep.Body})
 }
 
-func (h *handlers) apiCompletePlan(w http.ResponseWriter, r *http.Request) {
-	h.setPlanStatus(w, r, store.PlanCompleted)
-}
-
-func (h *handlers) apiReopenPlan(w http.ResponseWriter, r *http.Request) {
-	h.setPlanStatus(w, r, store.PlanActive)
-}
-
-func (h *handlers) setPlanStatus(w http.ResponseWriter, r *http.Request, status string) {
-	id := r.PathValue("id")
-	if err := h.st.SetPlanStatus(id, status); err != nil {
+// apiSetPlanStatus moves a plan through its lifecycle (active|completed|stashed).
+// The target is supplied in the body, so an unknown value is a 400.
+func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Status string `json:"status"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if !store.ValidPlanStatus(in.Status) {
+		writeJSONError(w, http.StatusBadRequest, "status must be one of active, completed, stashed")
+		return
+	}
+	if err := h.st.SetPlanStatus(r.PathValue("id"), in.Status); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}

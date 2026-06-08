@@ -361,6 +361,10 @@ button.danger:hover { background: #ffebe9; }
 .plan-list li.completed { background: #fbfcfd; }
 .plan-list li.completed .title { color: var(--muted); }
 
+/* Stashed plans are tucked away; dim them like completed ones. */
+.plan-list li.stashed { background: #fbfcfd; opacity: .85; }
+.plan-list li.stashed .title { color: var(--muted); }
+
 /* ---- plan-list filters ---- */
 .toolbar .spacer { flex: 1; }
 .filter { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }

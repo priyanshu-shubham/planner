@@ -408,6 +408,18 @@ func (s *sqliteStore) SetPlanStatus(planID, status string) error {
 	return nil
 }
 
+// SetPlanProject re-assigns the project a plan is grouped under.
+func (s *sqliteStore) SetPlanProject(planID, project string) error {
+	res, err := s.db.Exec(`UPDATE plans SET project=? WHERE id=?`, project, planID)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
 // DeletePlan permanently removes a plan and everything under it: all versions,
 // their comments, and those comments' replies.
 func (s *sqliteStore) DeletePlan(planID string) error {

@@ -3,6 +3,7 @@ package web
 import (
 	"net/http"
 	"strconv"
+	"strings"
 
 	"planner/internal/store"
 )
@@ -362,6 +363,27 @@ func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.st.SetPlanStatus(r.PathValue("id"), in.Status); err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// apiSetPlanProject re-assigns the project a plan is grouped under. The value is
+// free-form (a folder path or a repo identity); a blank value clears it back to
+// the "No Project" placeholder.
+func (h *handlers) apiSetPlanProject(w http.ResponseWriter, r *http.Request) {
+	var in struct {
+		Project string `json:"project"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	project := strings.TrimSpace(in.Project)
+	if project == "" {
+		project = store.NoProject
+	}
+	if err := h.st.SetPlanProject(r.PathValue("id"), project); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}

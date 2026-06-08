@@ -34,6 +34,7 @@ func Serve(st store.Store, addr string) error {
 	mux.HandleFunc("GET /api/plans/{id}", h.apiPlanMeta)
 	mux.HandleFunc("DELETE /api/plans/{id}", h.apiDeletePlan)
 	mux.HandleFunc("POST /api/plans/{id}/status", h.apiSetPlanStatus)
+	mux.HandleFunc("POST /api/plans/{id}/project", h.apiSetPlanProject)
 	mux.HandleFunc("POST /api/plans/{id}/versions", h.apiAddVersion)
 	mux.HandleFunc("GET /api/plans/{id}/v/{n}", h.apiVersionView)
 	mux.HandleFunc("POST /api/plans/{id}/v/{n}/comments", h.apiAddComment)

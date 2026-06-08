@@ -170,6 +170,11 @@ func (s *firestoreStore) SetPlanStatus(planID, status string) error {
 	return mapErr(err) // Update on a missing doc returns NotFound
 }
 
+func (s *firestoreStore) SetPlanProject(planID, project string) error {
+	_, err := s.plans().Doc(planID).Update(s.ctx, []firestore.Update{{Path: "project", Value: project}})
+	return mapErr(err) // Update on a missing doc returns NotFound
+}
+
 func (s *firestoreStore) AddVersion(planID, content string, files []FileSnapshot) (Version, error) {
 	var v Version
 	refs, shas := fileDocs(files)

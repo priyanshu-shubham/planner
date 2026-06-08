@@ -21,6 +21,7 @@ type Store interface {
 	CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error)
 	GetPlan(planID string) (Plan, error) // Plan.Versions filled, ascending
 	SetPlanStatus(planID, status string) error
+	SetPlanProject(planID, project string) error
 	AddVersion(planID, content string, files []FileSnapshot) (Version, error)
 	GetVersion(planID string, number int) (Version, error)
 

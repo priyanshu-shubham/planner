@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { Header } from "./Header.jsx";
 import { MarkdownDoc } from "./MarkdownDoc.jsx";
 import { CodePreview } from "./CodePreview.jsx";
-import { TrashIcon } from "./icons.jsx";
+import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon } from "./icons.jsx";
 
 export function VersionPage({ planId, number, navigate }) {
   const [view, setView] = useState(null);
@@ -159,7 +159,14 @@ function CommentCard({ c, onChange, onFlash }) {
       </div>
 
       <div className="actions" onClick={(e) => e.stopPropagation()}>
-        <button onClick={toggle}>{c.status === "open" ? "Resolve" : "Reopen"}</button>
+        <button
+          className="icon-btn"
+          title={c.status === "open" ? "Resolve" : "Reopen"}
+          aria-label={c.status === "open" ? "Resolve comment" : "Reopen comment"}
+          onClick={toggle}
+        >
+          {c.status === "open" ? <CheckCircleIcon /> : <CircleIcon />}
+        </button>
         <button className="icon-btn danger" title="Delete comment" aria-label="Delete comment" onClick={del}>
           <TrashIcon />
         </button>
@@ -213,9 +220,21 @@ function Carryover({ items, prev, onChange }) {
 
 function Composer({ composer, onCancel, onSubmit }) {
   const [body, setBody] = useState("");
+  const [copied, setCopied] = useState(false);
   const ref = useRef(null);
   const formRef = useRef(null);
   useEffect(() => { ref.current?.focus(); }, []);
+
+  // Copy the full (untruncated) quote. The autofocused textarea steals the
+  // Cmd+C target, so a button is the only reliable way to copy the selection
+  // while the composer is open.
+  async function copyQuote() {
+    try {
+      await navigator.clipboard.writeText(composer.quote);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch { /* clipboard unavailable; ignore */ }
+  }
 
   // Dismiss on Escape or a click/tap outside — but only when the draft is empty,
   // so a stray click never discards typed text. Cancel always closes explicitly.
@@ -241,7 +260,18 @@ function Composer({ composer, onCancel, onSubmit }) {
     <form ref={formRef} className="composer" style={{ top: composer.top, left: composer.left }} onSubmit={submit}>
       <div className="composer-target">
         {composer.quote
-          ? <>on “<span className="composer-quote">{truncate(composer.quote, 80)}</span>”</>
+          ? <>
+              on “<span className="composer-quote">{truncate(composer.quote, 80)}</span>”
+              <button
+                type="button"
+                className="composer-copy icon-btn"
+                title={copied ? "Copied" : "Copy quote"}
+                aria-label={copied ? "Copied" : "Copy quote"}
+                onClick={copyQuote}
+              >
+                {copied ? <CheckIcon /> : <CopyIcon />}
+              </button>
+            </>
           : "on the whole file"}
       </div>
       <textarea ref={ref} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Leave a comment for the agent…" />

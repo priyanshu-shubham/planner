@@ -77,6 +77,32 @@ export function UnarchiveIcon() {
   );
 }
 
+// CopyIcon is the familiar two-overlapping-sheets glyph, used on the composer's
+// copy-quote button.
+export function CopyIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="5.25" y="5.25" width="8" height="8" rx="1.2" stroke="currentColor" strokeWidth="1.1" />
+      <path
+        d="M10.75 5.25V3.95c0-.66-.54-1.2-1.2-1.2H3.95c-.66 0-1.2.54-1.2 1.2v5.6c0 .66.54 1.2 1.2 1.2h1.3"
+        stroke="currentColor"
+        strokeWidth="1.1"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+// CheckIcon is a bare checkmark, shown briefly after a successful copy.
+export function CheckIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3.5 8.5l3 3 6-6.5" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function TrashIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">

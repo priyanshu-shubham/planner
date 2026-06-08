@@ -41,12 +41,20 @@ export function MarkdownDoc({ content, docRef, onSelect, files }) {
   function handleMouseUp() {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return;
-    const quote = sel.toString().trim();
-    if (!quote) return;
 
     const range = sel.getRangeAt(0);
     const container = docRef.current;
     if (!container || !container.contains(range.commonAncestorContainer)) return;
+
+    // Snap the selection out to whole-word boundaries so a half-grabbed word is
+    // still quoted in full, then reflect the snapped range in the on-screen
+    // selection so the highlight and a manual copy match the stored quote.
+    expandToWord(range);
+    sel.removeAllRanges();
+    sel.addRange(range);
+
+    const quote = sel.toString().trim();
+    if (!quote) return;
 
     const startBlock = closestBlock(range.startContainer);
     const endBlock = closestBlock(range.endContainer);
@@ -80,6 +88,36 @@ export function MarkdownDoc({ content, docRef, onSelect, files }) {
       ))}
     </article>
   );
+}
+
+// expandToWord grows a range's endpoints outward to the nearest word boundary,
+// but only when an endpoint actually falls inside a word (the boundary char and
+// the char just outside it are both word characters). Endpoints that already sit
+// on whitespace/punctuation are left alone, so selecting " great" never swallows
+// the preceding "is". Word chars are Unicode letters, digits, and underscore, so
+// accented text stays intact. Only adjusts endpoints that land in text nodes.
+function expandToWord(range) {
+  const isWord = (ch) => !!ch && /[\p{L}\p{N}_]/u.test(ch);
+
+  const sc = range.startContainer;
+  if (sc.nodeType === Node.TEXT_NODE) {
+    const t = sc.nodeValue;
+    let s = range.startOffset;
+    if (isWord(t[s]) && isWord(t[s - 1])) {
+      while (s > 0 && isWord(t[s - 1])) s--;
+      range.setStart(sc, s);
+    }
+  }
+
+  const ec = range.endContainer;
+  if (ec.nodeType === Node.TEXT_NODE) {
+    const t = ec.nodeValue;
+    let e = range.endOffset;
+    if (isWord(t[e - 1]) && isWord(t[e])) {
+      while (e < t.length && isWord(t[e])) e++;
+      range.setEnd(ec, e);
+    }
+  }
 }
 
 function closestBlock(node) {

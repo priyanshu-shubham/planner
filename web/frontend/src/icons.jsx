@@ -28,15 +28,22 @@ export function FolderIcon() {
   );
 }
 
-export function RepoIcon() {
+// GitBranchIcon is the familiar git branch glyph — a trunk with a branch
+// splitting off and merging back — used to mark a plan whose project is a git
+// remote identity (vs. a plain folder path).
+export function GitBranchIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="4.5" cy="3.6" r="1.55" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="4.5" cy="12.4" r="1.55" stroke="currentColor" strokeWidth="1.1" />
+      <circle cx="11.5" cy="3.6" r="1.55" stroke="currentColor" strokeWidth="1.1" />
+      <path d="M4.5 5.15v5.7" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
       <path
-        d="M4 1.75h8.25c.55 0 1 .45 1 1v10.5l-3-1.6-3 1.6V1.75zM4 1.75c-.97 0-1.75.78-1.75 1.75v8.5c0 .97.78 1.75 1.75 1.75h2.25"
+        d="M11.5 5.15v1.6a3.2 3.2 0 0 1-3.2 3.2H6"
         stroke="currentColor"
         strokeWidth="1.1"
-        strokeLinejoin="round"
         strokeLinecap="round"
+        strokeLinejoin="round"
       />
     </svg>
   );

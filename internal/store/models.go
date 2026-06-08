@@ -6,7 +6,7 @@ import "time"
 type Plan struct {
 	ID        string
 	Title     string
-	Status    string // "active" | "completed"
+	Status    string // "active" | "completed" | "stashed"
 	Project   string // absolute path the plan was created from; "No Project" if unknown
 	CreatedAt time.Time
 	Versions  []int // ascending version numbers; filled by GetPlan only
@@ -15,8 +15,15 @@ type Plan struct {
 const (
 	PlanActive    = "active"
 	PlanCompleted = "completed"
+	PlanStashed   = "stashed"
 	NoProject     = "No Project" // project value when the origin folder is unknown
 )
+
+// ValidPlanStatus reports whether s is one of the plan lifecycle statuses. The
+// status endpoint takes a client-supplied value, so it whitelists with this.
+func ValidPlanStatus(s string) bool {
+	return s == PlanActive || s == PlanCompleted || s == PlanStashed
+}
 
 // Version is an immutable snapshot of a plan's markdown content.
 type Version struct {

@@ -5,7 +5,6 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -23,8 +22,7 @@ import (
 const usage = `planner — AI/human plan review loop
 
 Usage:
-  planner serve    [--port 8080] [--backend sqlite|firestore] [--db planner.db]
-                   [--project GCP_PROJECT] [--firestore-database DB]
+  planner serve    [--port 8080] [--backend sqlite|postgres] [--db PATH_OR_DSN]
   planner create   --title TITLE [--file plan.md]      (reads stdin if no --file)
   planner update   PLAN_ID [--file plan.md]            (reads stdin if no --file)
   planner show     PLAN_ID [--version N] [--json]
@@ -35,12 +33,10 @@ Client commands talk to a running server:
   --server URL   planner server base URL (default http://localhost:8080, or $PLANNER_SERVER)
 
 Server only:
-  --backend KIND         sqlite (default) or firestore; or $PLANNER_BACKEND
-  --db PATH              SQLite file (default ~/.planner/planner.db, or $PLANNER_DB)
-  --project ID           GCP project for firestore; or $PLANNER_FIRESTORE_PROJECT
-  --firestore-database   Firestore database id (default "(default)"); or
-                         $PLANNER_FIRESTORE_DATABASE
-  $PORT, if set, overrides --port's default (Cloud Run sets it).
+  --backend KIND         sqlite (default) or postgres; or $PLANNER_BACKEND
+  --db PATH_OR_DSN       sqlite: file path (default ~/.planner/planner.db);
+                         postgres: connection string. Or $PLANNER_DB.
+  $PORT, if set, overrides --port's default (some hosting platforms set it).
 `
 
 // Run dispatches a subcommand. args is os.Args[1:].
@@ -240,9 +236,7 @@ func cmdServe(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	port := fs.Int("port", 8080, "port to listen on")
 	db := dbPath(fs)
-	backend := fs.String("backend", envOr("PLANNER_BACKEND", "sqlite"), "storage backend: sqlite|firestore")
-	project := fs.String("project", os.Getenv("PLANNER_FIRESTORE_PROJECT"), "GCP project id (firestore backend)")
-	database := fs.String("firestore-database", envOr("PLANNER_FIRESTORE_DATABASE", "(default)"), "Firestore database id (firestore backend)")
+	backend := fs.String("backend", envOr("PLANNER_BACKEND", "sqlite"), "storage backend: sqlite|postgres")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -259,7 +253,7 @@ func cmdServe(args []string) error {
 		}
 	}
 
-	st, desc, err := openBackend(*backend, *db, *project, *database)
+	st, desc, err := openBackend(*backend, *db)
 	if err != nil {
 		return err
 	}
@@ -270,8 +264,9 @@ func cmdServe(args []string) error {
 }
 
 // openBackend opens the selected store and returns it with a human-readable
-// description for the startup banner.
-func openBackend(backend, db, project, database string) (store.Store, string, error) {
+// description for the startup banner. For postgres, db carries the connection
+// string (the --db flag doubles as the DSN).
+func openBackend(backend, db string) (store.Store, string, error) {
 	switch backend {
 	case "sqlite":
 		st, err := store.OpenSQLite(db)
@@ -280,18 +275,40 @@ func openBackend(backend, db, project, database string) (store.Store, string, er
 		}
 		abs, _ := filepath.Abs(db)
 		return st, "sqlite: " + abs, nil
-	case "firestore":
-		if project == "" {
-			return nil, "", fmt.Errorf("firestore backend requires --project or $PLANNER_FIRESTORE_PROJECT")
+	case "postgres":
+		// The default --db value is a SQLite file path, which is meaningless for
+		// postgres; require an explicit connection string.
+		if db == "" || db == defaultDBPath() {
+			return nil, "", fmt.Errorf("postgres backend requires a connection string via --db or $PLANNER_DB")
 		}
-		st, err := store.OpenFirestore(context.Background(), project, database)
+		st, err := store.OpenPostgres(db)
 		if err != nil {
 			return nil, "", err
 		}
-		return st, fmt.Sprintf("firestore: project=%s database=%s", project, database), nil
+		return st, "postgres: " + redactDSN(db), nil
 	default:
-		return nil, "", fmt.Errorf("unknown backend %q (want sqlite or firestore)", backend)
+		return nil, "", fmt.Errorf("unknown backend %q (want sqlite or postgres)", backend)
 	}
+}
+
+// redactDSN masks the password in a postgres connection string for the startup
+// banner. It handles the URL form (postgres://user:pw@host/db); keyword DSNs
+// (host=... password=...) and other forms are returned unchanged.
+func redactDSN(dsn string) string {
+	i := strings.Index(dsn, "://")
+	if i < 0 {
+		return dsn
+	}
+	rest := dsn[i+3:]
+	at := strings.IndexByte(rest, '@')
+	if at < 0 {
+		return dsn
+	}
+	userinfo := rest[:at]
+	if c := strings.IndexByte(userinfo, ':'); c >= 0 {
+		userinfo = userinfo[:c] + ":****"
+	}
+	return dsn[:i+3] + userinfo + rest[at:]
 }
 
 // flagSet reports whether the named flag was explicitly provided on the command

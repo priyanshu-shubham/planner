@@ -7,7 +7,7 @@ var ErrNotFound = errors.New("not found")
 
 // Store is the storage backend planner runs on. The web server (and through it
 // the CLI) depends only on this interface, so the same handlers run against the
-// local SQLite file (OpenSQLite) or Firestore on Cloud Run (OpenFirestore).
+// local SQLite file (OpenSQLite) or a Postgres server (OpenPostgres).
 //
 // Conventions:
 //   - Creations return the created entity; its generated id/number is consumed

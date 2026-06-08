@@ -11,8 +11,8 @@ import (
 )
 
 // maxSnapshotBytes is the size ceiling for a captured file. Files at or above it
-// are skipped entirely (their reference tokens stay plain text), which also keeps
-// any single Firestore blob doc well under the 1 MiB limit.
+// are skipped entirely (their reference tokens stay plain text), keeping the
+// content-addressed blob store to small, reviewable file bodies.
 const maxSnapshotBytes = 50 * 1024
 
 // knownBasenames are extensionless filenames common enough to treat as refs even

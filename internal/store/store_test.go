@@ -1,7 +1,6 @@
 package store
 
 import (
-	"context"
 	"errors"
 	"os"
 	"path/filepath"
@@ -9,9 +8,13 @@ import (
 )
 
 // backends returns the Store implementations the conformance suite runs against.
-// SQLite always runs; Firestore runs only when FIRESTORE_EMULATOR_HOST is set
-// (so CI without the emulator stays green). Start one locally with
-// `gcloud emulators firestore start` and export the host it prints.
+// SQLite always runs; Postgres runs only when PLANNER_TEST_POSTGRES_DSN is set
+// (so CI without a database stays green). Because Postgres is a shared database
+// rather than a fresh temp file, the factory truncates every table on open so
+// each subtest starts from a clean slate. Run one locally with, e.g.:
+//
+//	docker run --rm -e POSTGRES_PASSWORD=pw -p 5432:5432 postgres:16
+//	export PLANNER_TEST_POSTGRES_DSN='postgres://postgres:pw@localhost:5432/postgres?sslmode=disable'
 func backends() map[string]func(t *testing.T) Store {
 	m := map[string]func(t *testing.T) Store{
 		"sqlite": func(t *testing.T) Store {
@@ -22,15 +25,20 @@ func backends() map[string]func(t *testing.T) Store {
 			return s
 		},
 	}
-	if os.Getenv("FIRESTORE_EMULATOR_HOST") != "" {
-		m["firestore"] = func(t *testing.T) Store {
-			project := os.Getenv("PLANNER_FIRESTORE_PROJECT")
-			if project == "" {
-				project = "planner-test"
-			}
-			s, err := OpenFirestore(context.Background(), project, "(default)")
+	if dsn := os.Getenv("PLANNER_TEST_POSTGRES_DSN"); dsn != "" {
+		m["postgres"] = func(t *testing.T) Store {
+			s, err := OpenPostgres(dsn)
 			if err != nil {
 				t.Fatal(err)
+			}
+			ps, ok := s.(*sqlStore)
+			if !ok {
+				t.Fatalf("OpenPostgres returned %T, want *sqlStore", s)
+			}
+			if _, err := ps.db.Exec(
+				`TRUNCATE plans, versions, comments, replies, file_blobs, version_files`); err != nil {
+				s.Close()
+				t.Fatalf("truncate postgres tables: %v", err)
 			}
 			return s
 		}

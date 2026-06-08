@@ -25,12 +25,12 @@ COPY --from=frontend /src/internal/web/static/ ./internal/web/static/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /planner .
 
 # Stage 3: minimal runtime. distroless/static carries CA certificates (needed
-# for the Firestore TLS connection) and runs as a non-root user.
+# for the Postgres TLS connection) and runs as a non-root user.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /planner /planner
 
-# Cloud Run injects $PORT; `planner serve` binds 0.0.0.0:$PORT (see cli.go).
-# Default the container to the Firestore backend; the project must still be
-# supplied via PLANNER_FIRESTORE_PROJECT (or --project) at deploy time.
-ENV PLANNER_BACKEND=firestore
+# The server injects $PORT; `planner serve` binds 0.0.0.0:$PORT (see cli.go).
+# Default the container to the Postgres backend; the connection string must still
+# be supplied via $PLANNER_DB (or --db) at deploy time.
+ENV PLANNER_BACKEND=postgres
 ENTRYPOINT ["/planner", "serve"]

@@ -38,8 +38,9 @@ header.topbar {
   gap: 14px;
   padding: 12px 24px;
   border-bottom: 1px solid var(--border);
-  background: rgba(246, 248, 250, .85);
-  backdrop-filter: saturate(180%) blur(8px);
+  /* Near-opaque, no backdrop-filter: a backdrop blur under a sticky header
+     must re-blur on every scroll frame and visibly stutters on long docs. */
+  background: rgba(246, 248, 250, .97);
 }
 header.topbar h1 { font-size: 15px; margin: 0; letter-spacing: -.01em; }
 header.topbar h1 a { color: #1f2328; }
@@ -72,10 +73,25 @@ header.topbar .spacer { flex: 1; }
 
 .layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
+  grid-template-columns: minmax(0, 1fr) 360px; /* sidebar width set inline (resizable) */
   gap: 32px;
   align-items: start;
 }
+
+/* Sidebar resize: the wrapper stretches to the full column so the absolutely
+   positioned handle (sitting in the grid gap) spans the page and the sticky
+   sidebar keeps room to travel. */
+.side-wrap { position: relative; align-self: stretch; min-width: 0; }
+.col-resizer {
+  position: absolute; left: -22px; top: 0; bottom: 0; width: 12px;
+  cursor: col-resize; z-index: 5;
+}
+.col-resizer::after {
+  content: ""; position: absolute; left: 5px; top: 0; bottom: 0; width: 2px;
+  background: transparent; transition: background .12s;
+}
+.col-resizer:hover::after, body.resizing .col-resizer::after { background: var(--accent); }
+body.resizing { cursor: col-resize; user-select: none; }
 
 /* ---- the markdown viewer ---- */
 article.doc {

@@ -5,11 +5,42 @@ import { MarkdownDoc } from "./MarkdownDoc.jsx";
 import { CodePreview } from "./CodePreview.jsx";
 import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, BotIcon, PersonIcon } from "./icons.jsx";
 
+// The comment pane is user-resizable between these bounds (px).
+const SIDEBAR_MIN = 280;
+const SIDEBAR_MAX = 640;
+const SIDEBAR_DEFAULT = 360;
+
+function savedSidebarWidth() {
+  const w = Number(localStorage.getItem("planner.sidebarW"));
+  return w >= SIDEBAR_MIN && w <= SIDEBAR_MAX ? w : SIDEBAR_DEFAULT;
+}
+
 export function VersionPage({ planId, number, navigate }) {
   const [view, setView] = useState(null);
   const [err, setErr] = useState(null);
   const [composer, setComposer] = useState(null); // {lineStart,lineEnd,quote,top,left}
+  const [sideW, setSideW] = useState(savedSidebarWidth);
   const docRef = useRef(null);
+  const layoutRef = useRef(null);
+
+  // Drag the gutter handle to resize the comment pane (clamped, persisted).
+  function startResize(e) {
+    e.preventDefault();
+    const onMove = (ev) => {
+      if (!layoutRef.current) return;
+      const right = layoutRef.current.getBoundingClientRect().right;
+      setSideW(Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(right - ev.clientX))));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.classList.remove("resizing");
+      setSideW((w) => { localStorage.setItem("planner.sidebarW", String(w)); return w; });
+    };
+    document.body.classList.add("resizing");
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }
 
   const load = useCallback(() => {
     api.versionView(planId, number).then(setView).catch((e) => setErr(e.message));
@@ -94,11 +125,19 @@ export function VersionPage({ planId, number, navigate }) {
           <Carryover planId={planId} items={view.carryover} prev={view.prev_number} onChange={load} />
         )}
 
-        <div className="layout">
+        <div className="layout" ref={layoutRef} style={{ gridTemplateColumns: `minmax(0, 1fr) ${sideW}px` }}>
           <MarkdownDoc content={view.content} docRef={docRef} onSelect={onSelect} files={view.files} />
           <CodePreview docRef={docRef} />
 
-          <aside className="sidebar">
+          <div className="side-wrap">
+            <div
+              className="col-resizer"
+              onMouseDown={startResize}
+              role="separator"
+              aria-orientation="vertical"
+              aria-label="Resize comment pane"
+            />
+            <aside className="sidebar">
             <div className="toolbar">
               <button className="subtle" onClick={commentWholeFile}>+ Comment on whole file</button>
             </div>
@@ -118,7 +157,8 @@ export function VersionPage({ planId, number, navigate }) {
                 ))}
               </>
             )}
-          </aside>
+            </aside>
+          </div>
         </div>
       </main>
 

@@ -37,10 +37,9 @@ header.topbar {
   align-items: center;
   gap: 14px;
   padding: 12px 24px;
-  border-bottom: 1px solid var(--border);
-  /* Near-opaque, no backdrop-filter: a backdrop blur under a sticky header
-     must re-blur on every scroll frame and visibly stutters on long docs. */
-  background: rgba(246, 248, 250, .97);
+  /* Opaque on purpose: translucency needed a backdrop blur to look right, and
+     that blur re-rendered on every scroll frame (visible stutter). */
+  background: var(--bg);
 }
 header.topbar h1 { font-size: 15px; margin: 0; letter-spacing: -.01em; }
 header.topbar h1 a { color: #1f2328; }

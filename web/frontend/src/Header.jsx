@@ -89,7 +89,7 @@ function UserMenu({ navigate, user }) {
 }
 
 function SetupModal({ onClose }) {
-  const cmd = `Follow ${window.location.origin}/setup.md and set up planner`;
+  const cmd = `Curl ${window.location.origin}/setup.md and set up planner`;
   const [copied, setCopied] = useState(false);
 
   async function copy() {

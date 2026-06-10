@@ -7,7 +7,9 @@ package web
 
 import (
 	"compress/gzip"
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"io"
 	"io/fs"
 	"log"
@@ -105,7 +107,7 @@ func newHandler(st store.Store, cfg Config) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(staticSub))))
+	mux.Handle("GET /static/", staticHandler(staticSub))
 
 	// Agent-facing setup instructions (fetched by Claude Code et al).
 	mux.HandleFunc("GET /setup.md", h.serveSetup)
@@ -117,7 +119,148 @@ func newHandler(st store.Store, cfg Config) (http.Handler, error) {
 	// Everything else serves the SPA shell; React Router handles the path.
 	mux.HandleFunc("GET /", h.serveIndex)
 
-	return mux, nil
+	// Compress responses for clients that accept it. The React bundle is ~3.5 MB
+	// uncompressed (~1 MB gzipped); over a high-latency link that transfer, not the
+	// server, dominates page load.
+	return gzipMiddleware(mux), nil
+}
+
+// staticHandler serves the embedded React bundle with caching tuned to esbuild's
+// output: content-hashed chunks (chunk-*.js) never change, so they are cached for
+// a year as immutable; the stable-named entrypoints (bundle.js/.css) get an ETag
+// so a browser revalidates and receives a 304 until the bytes change on a deploy.
+// The files are flat under static/, so the leaf name is the path minus "/static/".
+func staticHandler(staticSub fs.FS) http.Handler {
+	etags := fileETags(staticSub)
+	fileServer := http.FileServer(http.FS(staticSub))
+	return http.StripPrefix("/static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		name := strings.TrimPrefix(r.URL.Path, "/")
+		if strings.HasPrefix(name, "chunk-") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")
+		}
+		if et := etags[name]; et != "" {
+			// ServeContent (inside FileServer) honors a pre-set ETag for
+			// If-None-Match, so revalidation returns 304 with no body.
+			w.Header().Set("Etag", et)
+		}
+		fileServer.ServeHTTP(w, r)
+	}))
+}
+
+// fileETags precomputes a content ETag for every embedded static file (the bundle
+// is fixed at build time, so this runs once at startup).
+func fileETags(fsys fs.FS) map[string]string {
+	etags := map[string]string{}
+	fs.WalkDir(fsys, ".", func(p string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		b, err := fs.ReadFile(fsys, p)
+		if err != nil {
+			return nil
+		}
+		sum := sha256.Sum256(b)
+		etags[p] = `"` + hex.EncodeToString(sum[:16]) + `"`
+		return nil
+	})
+	return etags
+}
+
+// gzipMiddleware compresses responses for clients that send Accept-Encoding: gzip,
+// leaving alone responses a handler already encoded (e.g. /cli/{platform}) and
+// incompressible content types. It drops any Range request header first so a
+// compressed response is never a partial one.
+func gzipMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			next.ServeHTTP(w, r)
+			return
+		}
+		r.Header.Del("Range")
+		gw := &gzipResponseWriter{ResponseWriter: w}
+		defer gw.close()
+		next.ServeHTTP(gw, r)
+	})
+}
+
+// gzipResponseWriter defers the compress/passthrough decision until the headers
+// are known (Content-Type, any handler-set Content-Encoding, status code).
+type gzipResponseWriter struct {
+	http.ResponseWriter
+	gz      *gzip.Writer
+	decided bool
+}
+
+func (w *gzipResponseWriter) WriteHeader(status int) {
+	if w.decided {
+		w.ResponseWriter.WriteHeader(status)
+		return
+	}
+	w.decided = true
+	h := w.Header()
+	h.Add("Vary", "Accept-Encoding")
+	if h.Get("Content-Encoding") == "" && bodyAllowedForStatus(status) && compressibleType(h.Get("Content-Type")) {
+		h.Del("Content-Length") // the length changes once compressed
+		h.Set("Content-Encoding", "gzip")
+		w.gz = gzip.NewWriter(w.ResponseWriter)
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *gzipResponseWriter) Write(b []byte) (int, error) {
+	if !w.decided {
+		if w.Header().Get("Content-Type") == "" {
+			w.Header().Set("Content-Type", http.DetectContentType(b))
+		}
+		w.WriteHeader(http.StatusOK)
+	}
+	if w.gz != nil {
+		return w.gz.Write(b)
+	}
+	return w.ResponseWriter.Write(b)
+}
+
+// Flush lets streaming handlers (if any) push bytes through the gzip writer.
+func (w *gzipResponseWriter) Flush() {
+	if w.gz != nil {
+		w.gz.Flush()
+	}
+	if f, ok := w.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (w *gzipResponseWriter) close() {
+	if w.gz != nil {
+		w.gz.Close()
+	}
+}
+
+// compressibleType reports whether a Content-Type is worth gzipping. Already
+// compressed binaries (images, the gzipped CLI, octet-streams) are left alone.
+func compressibleType(ct string) bool {
+	if i := strings.IndexByte(ct, ';'); i >= 0 {
+		ct = ct[:i]
+	}
+	switch strings.TrimSpace(strings.ToLower(ct)) {
+	case "application/javascript", "application/json", "application/xml",
+		"image/svg+xml":
+		return true
+	}
+	return strings.HasPrefix(ct, "text/")
+}
+
+// bodyAllowedForStatus mirrors net/http: 1xx, 204 and 304 carry no body.
+func bodyAllowedForStatus(status int) bool {
+	switch {
+	case status >= 100 && status < 200:
+		return false
+	case status == http.StatusNoContent, status == http.StatusNotModified:
+		return false
+	}
+	return true
 }
 
 func (h *handlers) serveIndex(w http.ResponseWriter, r *http.Request) {
@@ -129,10 +272,7 @@ func (h *handlers) serveIndex(w http.ResponseWriter, r *http.Request) {
 // URL substituted in and the auth-mode-specific blocks resolved, so the commands
 // and links point at this running server and match whether login is required.
 func (h *handlers) serveSetup(w http.ResponseWriter, r *http.Request) {
-	base := "http://" + r.Host
-	if isSecure(r) {
-		base = "https://" + r.Host
-	}
+	base := h.externalBase(r)
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 	w.Write([]byte(renderSetup(string(setupMD), base, h.authEnabled())))
 }

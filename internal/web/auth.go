@@ -17,6 +17,9 @@ import (
 type Config struct {
 	Auth   *AuthConfig
 	CLIDir string
+	// BaseURL, when set, is the server's external origin ("https://host"), used to
+	// build absolute URLs.
+	BaseURL string
 }
 
 // AuthConfig holds the settings for Google-login auth. Secret is the HMAC key for
@@ -104,10 +107,28 @@ func (h *handlers) requireWebUser(next http.HandlerFunc) http.Handler {
 	})
 }
 
-// isSecure reports whether the request arrived over HTTPS, directly or via a
-// terminating proxy, so cookies can carry the Secure attribute when appropriate.
-func isSecure(r *http.Request) bool {
+// isSecure reports whether the request is served over HTTPS from the client's
+// perspective, so cookies can carry the Secure attribute. A configured BaseURL
+// wins (TLS-terminating proxies may strip X-Forwarded-Proto); otherwise fall back
+// to the request's TLS state or the forwarded-proto header.
+func (h *handlers) isSecure(r *http.Request) bool {
+	if h.cfg.BaseURL != "" {
+		return strings.HasPrefix(h.cfg.BaseURL, "https://")
+	}
 	return r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https"
+}
+
+// externalBase returns the server's external origin ("scheme://host"). A configured
+// BaseURL wins; otherwise it is derived from the request.
+func (h *handlers) externalBase(r *http.Request) string {
+	if h.cfg.BaseURL != "" {
+		return h.cfg.BaseURL
+	}
+	scheme := "http"
+	if h.isSecure(r) {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host
 }
 
 // setRefreshCookie stores the raw refresh token in an httpOnly cookie scoped to
@@ -118,7 +139,7 @@ func (h *handlers) setRefreshCookie(w http.ResponseWriter, r *http.Request, toke
 		Value:    token,
 		Path:     refreshPath,
 		HttpOnly: true,
-		Secure:   isSecure(r),
+		Secure:   h.isSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		Expires:  time.Now().Add(refreshTTL),
 		MaxAge:   int(refreshTTL.Seconds()),
@@ -132,7 +153,7 @@ func (h *handlers) clearRefreshCookie(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     refreshPath,
 		HttpOnly: true,
-		Secure:   isSecure(r),
+		Secure:   h.isSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

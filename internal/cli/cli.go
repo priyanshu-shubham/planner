@@ -89,12 +89,19 @@ func dbPath(fs *flag.FlagSet) *string {
 	return fs.String("db", defaultDBPath(), "SQLite database file")
 }
 
-// defaultDBPath returns $PLANNER_DB if set, otherwise a fixed, absolute path in
-// the user's home directory (~/.planner/planner.db).
+// defaultDBPath returns $PLANNER_DB if set, otherwise the built-in SQLite path.
 func defaultDBPath() string {
 	if v := os.Getenv("PLANNER_DB"); v != "" {
 		return v
 	}
+	return sqliteHomeDefault()
+}
+
+// sqliteHomeDefault is the built-in SQLite database path (~/.planner/planner.db),
+// used when neither --db nor $PLANNER_DB supplies one. Kept separate from
+// defaultDBPath so the postgres backend can recognize "no DSN was provided" even
+// when $PLANNER_DB is set (in which case defaultDBPath returns that DSN).
+func sqliteHomeDefault() string {
 	if home, err := os.UserHomeDir(); err == nil {
 		return filepath.Join(home, ".planner", "planner.db")
 	}
@@ -277,6 +284,8 @@ func cmdServe(args []string) error {
 	// Directory of cross-compiled CLI binaries to serve at /cli/{platform} (the
 	// Docker image sets it; absent for plain local runs).
 	cfg.CLIDir = os.Getenv("PLANNER_CLI_DIR")
+	// External origin override (e.g. https://planner.example.com).
+	cfg.BaseURL = strings.TrimRight(os.Getenv("PLANNER_BASE_URL"), "/")
 
 	// Port precedence: an explicit --port wins; otherwise $PORT (set by Cloud
 	// Run) overrides the built-in default; otherwise the default stands.
@@ -351,9 +360,11 @@ func openBackend(backend, db string) (store.Store, string, error) {
 		abs, _ := filepath.Abs(db)
 		return st, "sqlite: " + abs, nil
 	case "postgres":
-		// The default --db value is a SQLite file path, which is meaningless for
-		// postgres; require an explicit connection string.
-		if db == "" || db == defaultDBPath() {
+		// A SQLite file path is meaningless for postgres; require a real DSN. The
+		// default --db value is the SQLite home path unless --db or $PLANNER_DB
+		// supplied one — compare against that path specifically (not defaultDBPath,
+		// which returns the DSN itself when $PLANNER_DB is set).
+		if db == "" || db == sqliteHomeDefault() {
 			return nil, "", fmt.Errorf("postgres backend requires a connection string via --db or $PLANNER_DB")
 		}
 		st, err := store.OpenPostgres(db)

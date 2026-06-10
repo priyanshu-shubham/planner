@@ -33,14 +33,9 @@ type oauthState struct {
 	Next     string `json:"n"`
 }
 
-// callbackURL is the Google redirect URI for this server, derived from the
-// incoming request so it matches whatever host/scheme the SPA was reached on.
-func callbackURL(r *http.Request) string {
-	scheme := "http"
-	if isSecure(r) {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host + "/auth/google/callback"
+// callbackURL is the Google redirect URI for this server.
+func (h *handlers) callbackURL(r *http.Request) string {
+	return h.externalBase(r) + "/auth/google/callback"
 }
 
 // validateNext keeps the post-login redirect same-origin: a path beginning with
@@ -89,7 +84,7 @@ func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 		Value:    h.signCookie(st),
 		Path:     "/auth",
 		HttpOnly: true,
-		Secure:   isSecure(r),
+		Secure:   h.isSecure(r),
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(oauthCookieTTL.Seconds()),
 	})
@@ -97,7 +92,7 @@ func (h *handlers) oauthLogin(w http.ResponseWriter, r *http.Request) {
 	challenge := base64.RawURLEncoding.EncodeToString(sha256Sum(st.Verifier))
 	q := url.Values{
 		"client_id":             {h.cfg.Auth.GoogleClientID},
-		"redirect_uri":          {callbackURL(r)},
+		"redirect_uri":          {h.callbackURL(r)},
 		"response_type":         {"code"},
 		"scope":                 {"openid email profile"},
 		"state":                 {st.State},
@@ -173,7 +168,7 @@ func (h *handlers) exchangeCode(r *http.Request, code, verifier string) (string,
 		"code":          {code},
 		"client_id":     {h.cfg.Auth.GoogleClientID},
 		"client_secret": {h.cfg.Auth.GoogleClientSecret},
-		"redirect_uri":  {callbackURL(r)},
+		"redirect_uri":  {h.callbackURL(r)},
 		"grant_type":    {"authorization_code"},
 		"code_verifier": {verifier},
 	}

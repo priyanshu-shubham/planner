@@ -63,17 +63,21 @@ waiting `planner setup` automatically, which prints `authenticated as <email>` a
 exits. Wait for that before continuing — after it the CLI is authorized and you run
 `planner` commands normally.
 
-(If the human's browser is on a different machine than this one — e.g. you're on a
-remote box — the local listener isn't reachable: run
-`planner setup --server {{BASE}} --no-browser` and the human pastes the token shown
-on the page.)
+**Use the command above (no `--no-browser`).** It runs a local listener that the
+browser redirects back to, so the token is captured automatically — you never paste
+anything. Only add `--no-browser` if the human's browser runs on a *different
+machine* than this CLI (e.g. you're on a remote/SSH box), where that local listener
+isn't reachable; then the human pastes the token shown on the page.
 {{END_AUTH}}
 
 ## 3. Add the usage section to your global `CLAUDE.md`
 
 Append the block below to your **global `~/.claude/CLAUDE.md`** (create it if
 needed) — the user-level memory, **not** the project's local `CLAUDE.md`. Replace
-any existing `<!-- BEGIN PLANNER -->` section; leave everything else untouched.
+any existing `<!-- BEGIN PLANNER -->` section; leave everything else untouched. If a
+`<!-- BEGIN PLANNER -->` block already exists, do **not** assume it is current —
+replace it wholesale with the block below even if it looks similar; older versions
+differ in subtle but important ways.
 
 <!-- BEGIN PLANNER -->
 ## Plan review with `planner`

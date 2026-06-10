@@ -9,7 +9,8 @@ import (
 )
 
 type handlers struct {
-	st store.Store
+	st  store.Store
+	cfg Config
 }
 
 // ---- DTOs (the JSON wire shapes shared with the CLI and React) ----
@@ -101,7 +102,7 @@ func toCommentDTOs(cs []store.Comment) []commentDTO {
 // ---- Plan endpoints ----
 
 func (h *handlers) apiListPlans(w http.ResponseWriter, r *http.Request) {
-	plans, err := h.st.ListPlans()
+	plans, err := h.store(r).ListPlans()
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -120,7 +121,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 		Project string               `json:"project"`
 		Files   []store.FileSnapshot `json:"files"`
 	}
-	if !readJSON(w, r, &in) {
+	if !readJSONLimit(w, r, &in, maxPlanPostBytes) {
 		return
 	}
 	if in.Title == "" {
@@ -130,7 +131,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 	if in.Project == "" {
 		in.Project = store.NoProject
 	}
-	p, v, err := h.st.CreatePlan(in.Title, in.Content, in.Project, in.Files)
+	p, v, err := h.store(r).CreatePlan(in.Title, in.Content, in.Project, in.Files)
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -140,7 +141,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) apiPlanMeta(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	plan, err := h.st.GetPlan(id)
+	plan, err := h.store(r).GetPlan(id)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -158,10 +159,10 @@ func (h *handlers) apiAddVersion(w http.ResponseWriter, r *http.Request) {
 		Content string               `json:"content"`
 		Files   []store.FileSnapshot `json:"files"`
 	}
-	if !readJSON(w, r, &in) {
+	if !readJSONLimit(w, r, &in, maxPlanPostBytes) {
 		return
 	}
-	v, err := h.st.AddVersion(id, in.Content, in.Files)
+	v, err := h.store(r).AddVersion(id, in.Content, in.Files)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -188,7 +189,8 @@ func (h *handlers) resolveVersionNumber(plan store.Plan, n string) (int, error) 
 
 func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	plan, err := h.st.GetPlan(id)
+	st := h.store(r)
+	plan, err := st.GetPlan(id)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -198,17 +200,17 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 		writeVersionErr(w, err)
 		return
 	}
-	version, err := h.st.GetVersion(id, n)
+	version, err := st.GetVersion(id, n)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
-	comments, err := h.st.ListComments(version.ID, false)
+	comments, err := st.ListComments(version.ID, false)
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	fileList, err := h.st.GetVersionFileList(version.ID)
+	fileList, err := st.GetVersionFileList(version.ID)
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -218,8 +220,8 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 	var carryover []store.Comment
 	prevNumber := n - 1
 	if n == latest && prevNumber >= 1 {
-		if prev, err := h.st.GetVersion(id, prevNumber); err == nil {
-			if carryover, err = h.st.ListComments(prev.ID, true); err != nil {
+		if prev, err := st.GetVersion(id, prevNumber); err == nil {
+			if carryover, err = st.ListComments(prev.ID, true); err != nil {
 				writeServerError(w, err)
 				return
 			}
@@ -253,7 +255,8 @@ func toFileRefDTOs(refs []store.FileRef) []fileRefDTO {
 
 func (h *handlers) apiAddComment(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	plan, err := h.st.GetPlan(id)
+	st := h.store(r)
+	plan, err := st.GetPlan(id)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -263,7 +266,7 @@ func (h *handlers) apiAddComment(w http.ResponseWriter, r *http.Request) {
 		writeVersionErr(w, err)
 		return
 	}
-	version, err := h.st.GetVersion(id, n)
+	version, err := st.GetVersion(id, n)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -281,7 +284,7 @@ func (h *handlers) apiAddComment(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	c, err := h.st.AddComment(version.ID, in.LineStart, in.LineEnd, in.Quote, in.Body)
+	c, err := st.AddComment(version.ID, in.LineStart, in.LineEnd, in.Quote, in.Body)
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -299,7 +302,7 @@ func (h *handlers) apiReopenComment(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) setStatus(w http.ResponseWriter, r *http.Request, status string) {
 	cid := r.PathValue("id")
-	if err := h.st.SetCommentStatus(cid, status); err != nil {
+	if err := h.store(r).SetCommentStatus(cid, status); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -308,7 +311,7 @@ func (h *handlers) setStatus(w http.ResponseWriter, r *http.Request, status stri
 
 func (h *handlers) apiKeepComment(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("id")
-	if err := h.st.CarryComment(cid); err != nil {
+	if err := h.store(r).CarryComment(cid); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -317,7 +320,7 @@ func (h *handlers) apiKeepComment(w http.ResponseWriter, r *http.Request) {
 
 func (h *handlers) apiDeleteComment(w http.ResponseWriter, r *http.Request) {
 	cid := r.PathValue("id")
-	if err := h.st.DeleteComment(cid); err != nil {
+	if err := h.store(r).DeleteComment(cid); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -341,7 +344,7 @@ func (h *handlers) apiAddReply(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	rep, err := h.st.AddReply(cid, in.Author, in.Body)
+	rep, err := h.store(r).AddReply(cid, in.Author, in.Body)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -362,7 +365,7 @@ func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "status must be one of active, completed, stashed")
 		return
 	}
-	if err := h.st.SetPlanStatus(r.PathValue("id"), in.Status); err != nil {
+	if err := h.store(r).SetPlanStatus(r.PathValue("id"), in.Status); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -383,7 +386,7 @@ func (h *handlers) apiSetPlanProject(w http.ResponseWriter, r *http.Request) {
 	if project == "" {
 		project = store.NoProject
 	}
-	if err := h.st.SetPlanProject(r.PathValue("id"), project); err != nil {
+	if err := h.store(r).SetPlanProject(r.PathValue("id"), project); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -432,7 +435,7 @@ func isHex(s string) bool {
 
 func (h *handlers) apiDeletePlan(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
-	if err := h.st.DeletePlan(id); err != nil {
+	if err := h.store(r).DeletePlan(id); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}

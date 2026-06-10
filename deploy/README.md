@@ -25,6 +25,20 @@ The server reads two settings:
 `$PORT`, if set, overrides the listen port (so the container fits platforms that
 inject it); otherwise the server binds `:8080`.
 
+## CLI distribution
+
+The image ships cross-compiled `planner` CLI binaries (linux/darwin/windows ×
+amd64/arm64, built by `make cli-dist`, stored gzipped — ~38 MB total instead of
+~106 MB raw) in `/opt/planner/cli` and sets `PLANNER_CLI_DIR` to point at it. The
+server serves them publicly at `GET /cli/{os}-{arch}`: clients that accept gzip
+(e.g. `curl --compressed`) get the compressed bytes, anyone else gets them
+decompressed on the fly, so the install command always yields a working binary.
+The agent-facing `/setup.md` tells agents to install the CLI from there — every
+machine gets a CLI that exactly matches the server's version. Outside the image,
+set `$PLANNER_CLI_DIR` to a `make cli-dist` output directory to enable the
+endpoint (plain uncompressed binaries in that directory work too); without it the
+endpoint returns a friendly 404 and setup falls back to a human-installed CLI.
+
 ## Run it
 
 With Docker (or any container platform):
@@ -45,15 +59,52 @@ planner serve --backend postgres --db 'postgres://USER:PASSWORD@HOST:5432/DBNAME
 
 The startup banner prints the backend and a password-redacted DSN.
 
-## ⚠️ Authentication / exposure
+## Authentication
 
-planner has **no authentication of its own**. Exposing it publicly would reveal
-every plan and comment to anyone with the URL. Put it behind one of:
+planner ships an **optional** in-app auth layer. It is **off by default**: a plain
+`planner serve` (or the Docker image as shipped) has no authentication and exposes
+every plan to anyone who can reach it — so an unauthenticated instance still needs
+a private network or an authenticating proxy in front of it.
 
-- an authenticating reverse proxy / load balancer, or
-- a private network reachable only by trusted clients.
+### Authenticated mode
 
-Adding an in-app auth layer is intentionally **out of scope**.
+Start the server with `--auth` (or `$PLANNER_AUTH=1`) to require a Google login and
+scope every plan to the user who created it. Web users sign in with Google; the
+CLI authorizes a machine via `planner setup` (a browser handoff that mints a
+personal access token). It needs:
+
+- `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET` — an OAuth 2.0 *Web application*
+  client from the [Google Cloud console](https://console.cloud.google.com/apis/credentials).
+  Register the redirect URI `https://YOUR_HOST/auth/google/callback` (use
+  `http://localhost:8080/auth/google/callback` for local testing).
+- `PLANNER_AUTH_SECRET` *(optional)* — the HMAC key used to sign access tokens. If
+  unset, a random key is generated per start: access tokens then become invalid on
+  restart, but browsers recover transparently via the refresh cookie, so the only
+  effect is that the CLI/SPA mint a fresh access token after a restart. Pin it to a
+  stable secret to avoid that, and **required** if you run more than one instance
+  (all instances must share the same key).
+
+```sh
+docker run -p 8080:8080 \
+  -e PLANNER_BACKEND=postgres \
+  -e PLANNER_DB='postgres://USER:PASSWORD@HOST:5432/DBNAME?sslmode=require' \
+  -e PLANNER_AUTH=1 \
+  -e GOOGLE_CLIENT_ID='…apps.googleusercontent.com' \
+  -e GOOGLE_CLIENT_SECRET='…' \
+  -e PLANNER_AUTH_SECRET="$(openssl rand -hex 32)" \
+  planner
+```
+
+The server must be reached over HTTPS in production (cookies are marked `Secure`
+when the request is HTTPS, directly or via an `X-Forwarded-Proto: https` proxy).
+
+### ⚠️ Mode downgrade exposes existing plans
+
+Auth is enforced only while `--auth` is on. Plans created in authed mode carry an
+owner; plans created **before** auth was enabled (or while it was off) have no
+owner and are **invisible** in authed mode. Conversely, **restarting an authed
+server without `--auth` turns filtering off and exposes every plan to every
+client.** Don't flip an authed instance back to no-auth on a public network.
 
 ## Local development
 

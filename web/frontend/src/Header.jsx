@@ -1,7 +1,9 @@
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { auth } from "./auth.js";
 
 export function Header({ navigate, children }) {
   const [setupOpen, setSetupOpen] = useState(false);
+
   return (
     <>
       <header className="topbar">
@@ -16,9 +18,71 @@ export function Header({ navigate, children }) {
         >
           AI setup
         </button>
+        {auth.enabled && auth.user && <UserMenu navigate={navigate} user={auth.user} />}
       </header>
       {setupOpen && <SetupModal onClose={() => setSetupOpen(false)} />}
     </>
+  );
+}
+
+// initials renders at most two letters for the avatar: the first letters of the
+// first two name words, else the first two characters of the name or email.
+function initials(user) {
+  const src = (user.name || user.email || "").trim();
+  if (!src) return "?";
+  const parts = src.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) return (parts[0][0] + parts[1][0]).toUpperCase();
+  return src.slice(0, 2).toUpperCase();
+}
+
+// UserMenu is the avatar in the top bar; clicking it opens a small menu with the
+// CLI-access page and sign-out. Closes on outside click or Escape.
+function UserMenu({ navigate, user }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e) { if (ref.current && !ref.current.contains(e.target)) setOpen(false); }
+    function onKey(e) { if (e.key === "Escape") setOpen(false); }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  async function signOut() {
+    await auth.logout();
+    window.location.href = "/login"; // full reload resets in-memory auth state
+  }
+
+  return (
+    <div className="user-menu" ref={ref}>
+      <button
+        className="avatar"
+        onClick={() => setOpen((o) => !o)}
+        title={user.email}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Account menu"
+      >
+        {initials(user)}
+      </button>
+      {open && (
+        <div className="user-dropdown" role="menu">
+          <div className="user-dropdown-head">
+            <div className="user-dropdown-name">{user.name || user.email}</div>
+            {user.name && <div className="user-dropdown-email">{user.email}</div>}
+          </div>
+          <button role="menuitem" onClick={() => { setOpen(false); navigate("/settings/cli"); }}>
+            CLI access
+          </button>
+          <button role="menuitem" onClick={signOut}>Sign out</button>
+        </div>
+      )}
+    </div>
   );
 }
 

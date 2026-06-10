@@ -36,7 +36,7 @@ func backends() map[string]func(t *testing.T) Store {
 				t.Fatalf("OpenPostgres returned %T, want *sqlStore", s)
 			}
 			if _, err := ps.db.Exec(
-				`TRUNCATE plans, versions, comments, replies, file_blobs, version_files`); err != nil {
+				`TRUNCATE plans, versions, comments, replies, file_blobs, version_files, users, refresh_tokens, pats CASCADE`); err != nil {
 				s.Close()
 				t.Fatalf("truncate postgres tables: %v", err)
 			}

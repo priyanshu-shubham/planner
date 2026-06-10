@@ -23,11 +23,16 @@ RUN go mod download
 COPY . .
 COPY --from=frontend /src/internal/web/static/ ./internal/web/static/
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /planner .
+# Cross-compile the CLI matrix the server distributes at /cli/{platform}; agents
+# install a binary that exactly matches this server's version.
+RUN make cli-dist
 
 # Stage 3: minimal runtime. distroless/static carries CA certificates (needed
 # for the Postgres TLS connection) and runs as a non-root user.
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /planner /planner
+COPY --from=build /src/cli-dist /opt/planner/cli
+ENV PLANNER_CLI_DIR=/opt/planner/cli
 
 # The server injects $PORT; `planner serve` binds 0.0.0.0:$PORT (see cli.go).
 # Default the container to the Postgres backend; the connection string must still

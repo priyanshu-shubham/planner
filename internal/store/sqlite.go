@@ -25,7 +25,36 @@ CREATE TABLE IF NOT EXISTS plans (
   title      TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'active',
   project    TEXT NOT NULL DEFAULT 'No Project',
+  owner_id   TEXT,
   created_at TIMESTAMP NOT NULL
+);
+
+-- Auth tables. Present on fresh databases; pre-auth databases gain plans.owner_id
+-- (and these tables) via migrate(). A user signs in with Google; refresh_tokens
+-- and pats hold only SHA-256 hashes of the actual credentials.
+CREATE TABLE IF NOT EXISTS users (
+  id         TEXT PRIMARY KEY,
+  google_sub TEXT NOT NULL UNIQUE,
+  email      TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  picture    TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pats (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users(id),
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   TIMESTAMP NOT NULL,
+  last_used_at TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS versions (
@@ -79,7 +108,13 @@ CREATE INDEX IF NOT EXISTS idx_comments_version ON comments(version_id);
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_version ON version_files(version_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_sha ON version_files(sha256);
+CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_pats_user ON pats(user_id);
 `
+
+// idx_plans_owner is created in migrate(), not here: a pre-auth database does
+// not yet have plans.owner_id when this schema runs, so the index on that column
+// must wait until migrate() has added the column.
 
 // OpenSQLite opens (creating if needed) the SQLite database at path and applies
 // the schema. WAL + a busy timeout allow the CLI and server to share the file.
@@ -134,6 +169,14 @@ func migrate(db *sql.DB) error {
 	}
 	if err := addColumn(db, "plans", "project", `TEXT NOT NULL DEFAULT 'No Project'`); err != nil {
 		return err
+	}
+	if err := addColumn(db, "plans", "owner_id", `TEXT`); err != nil {
+		return err
+	}
+	// Safe now that owner_id is guaranteed to exist (fresh DBs get it from the
+	// CREATE TABLE; pre-auth DBs from the addColumn above).
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_plans_owner ON plans(owner_id)`); err != nil {
+		return fmt.Errorf("create idx_plans_owner: %w", err)
 	}
 	return nil
 }

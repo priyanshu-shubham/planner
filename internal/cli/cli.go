@@ -5,6 +5,7 @@
 package cli
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -22,20 +23,26 @@ import (
 const usage = `planner — AI/human plan review loop
 
 Usage:
-  planner serve    [--port 8080] [--backend sqlite|postgres] [--db PATH_OR_DSN]
+  planner serve    [--port 8080] [--backend sqlite|postgres] [--db PATH_OR_DSN] [--auth]
+  planner setup    --server URL [--name NAME] [--no-browser]
   planner create   --title TITLE [--file plan.md]      (reads stdin if no --file)
   planner update   PLAN_ID [--file plan.md]            (reads stdin if no --file)
   planner show     PLAN_ID [--version N] [--json]
   planner comments PLAN_ID [--version N] [--status open|all] [--json]
   planner reply    COMMENT_ID [-m MESSAGE]             (reads stdin if no -m)
 
-Client commands talk to a running server:
-  --server URL   planner server base URL (default http://localhost:8080, or $PLANNER_SERVER)
+Client commands talk to the server configured by 'planner setup', which resolves
+as $PLANNER_SERVER > ~/.planner/config.json > http://localhost:8080. Run
+'planner setup --server URL' once to point the CLI at a server (and, when that
+server requires Google login, to authorize this machine).
 
 Server only:
   --backend KIND         sqlite (default) or postgres; or $PLANNER_BACKEND
   --db PATH_OR_DSN       sqlite: file path (default ~/.planner/planner.db);
                          postgres: connection string. Or $PLANNER_DB.
+  --auth                 require Google login + per-user scoping; or $PLANNER_AUTH.
+                         Needs $GOOGLE_CLIENT_ID and $GOOGLE_CLIENT_SECRET
+                         (optional $PLANNER_AUTH_SECRET to pin the HMAC key).
   $PORT, if set, overrides --port's default (some hosting platforms set it).
 `
 
@@ -50,6 +57,8 @@ func Run(args []string) int {
 	switch cmd {
 	case "serve":
 		err = cmdServe(rest)
+	case "setup":
+		err = cmdSetup(rest)
 	case "create":
 		err = cmdCreate(rest)
 	case "update":
@@ -92,15 +101,34 @@ func defaultDBPath() string {
 	return "planner.db"
 }
 
-func serverFlag(fs *flag.FlagSet) *string {
-	return fs.String("server", defaultServer(), "planner server base URL")
-}
+// defaultServer is the zero-config server URL used when neither $PLANNER_SERVER
+// nor a saved config points elsewhere.
+const defaultServer = "http://localhost:8080"
 
-func defaultServer() string {
-	if v := os.Getenv("PLANNER_SERVER"); v != "" {
-		return v
+// resolveClient builds the HTTP client for a client command, resolving the server
+// URL with precedence $PLANNER_SERVER > config.json > the default, and attaching
+// the saved token only when it belongs to the resolved server.
+func resolveClient() (*client, error) {
+	cfg, err := loadConfig()
+	if err != nil {
+		return nil, err
 	}
-	return "http://localhost:8080"
+	server, token := "", ""
+	switch {
+	case strings.TrimSpace(os.Getenv("PLANNER_SERVER")) != "":
+		server = normalizeServer(os.Getenv("PLANNER_SERVER"))
+		// Use the saved token only if the env server is the one we set up.
+		if cfg != nil && cfg.Token != "" && normalizeServer(cfg.Server) == server {
+			token = cfg.Token
+		}
+	case cfg != nil && cfg.Server != "":
+		server = normalizeServer(cfg.Server)
+		token = cfg.Token
+	}
+	if server == "" {
+		server = defaultServer
+	}
+	return newClient(server, token), nil
 }
 
 // workingDir is the absolute directory the CLI runs in. Referenced-file paths in
@@ -237,9 +265,18 @@ func cmdServe(args []string) error {
 	port := fs.Int("port", 8080, "port to listen on")
 	db := dbPath(fs)
 	backend := fs.String("backend", envOr("PLANNER_BACKEND", "sqlite"), "storage backend: sqlite|postgres")
+	auth := fs.Bool("auth", os.Getenv("PLANNER_AUTH") != "", "require Google login (per-user scoping)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+
+	cfg, err := authConfig(*auth)
+	if err != nil {
+		return err
+	}
+	// Directory of cross-compiled CLI binaries to serve at /cli/{platform} (the
+	// Docker image sets it; absent for plain local runs).
+	cfg.CLIDir = os.Getenv("PLANNER_CLI_DIR")
 
 	// Port precedence: an explicit --port wins; otherwise $PORT (set by Cloud
 	// Run) overrides the built-in default; otherwise the default stands.
@@ -259,8 +296,46 @@ func cmdServe(args []string) error {
 	}
 	defer st.Close()
 
-	fmt.Printf("planner serving on http://localhost:%d (%s)\n", *port, desc)
-	return web.Serve(st, fmt.Sprintf("0.0.0.0:%d", *port))
+	authDesc := "no auth"
+	if cfg.Auth != nil {
+		authDesc = "Google login"
+	}
+	fmt.Printf("planner serving on http://localhost:%d (%s, %s)\n", *port, desc, authDesc)
+	return web.Serve(st, fmt.Sprintf("0.0.0.0:%d", *port), cfg)
+}
+
+// authConfig builds the web auth configuration. When auth is off it returns the
+// zero Config (no login). When on it requires $GOOGLE_CLIENT_ID and
+// $GOOGLE_CLIENT_SECRET; $PLANNER_AUTH_SECRET is the optional HMAC key (a random
+// per-start key is used when unset — access tokens then expire on restart and the
+// SPA recovers silently via the refresh cookie).
+func authConfig(on bool) (web.Config, error) {
+	if !on {
+		return web.Config{}, nil
+	}
+	id, secret := os.Getenv("GOOGLE_CLIENT_ID"), os.Getenv("GOOGLE_CLIENT_SECRET")
+	if id == "" || secret == "" {
+		return web.Config{}, fmt.Errorf("--auth requires $GOOGLE_CLIENT_ID and $GOOGLE_CLIENT_SECRET")
+	}
+	hmacKey := []byte(os.Getenv("PLANNER_AUTH_SECRET"))
+	if len(hmacKey) == 0 {
+		hmacKey = randomSecret()
+	}
+	return web.Config{Auth: &web.AuthConfig{
+		GoogleClientID:     id,
+		GoogleClientSecret: secret,
+		Secret:             hmacKey,
+	}}, nil
+}
+
+// randomSecret returns a 32-byte random HMAC key for signing access tokens when
+// the operator did not pin one via $PLANNER_AUTH_SECRET.
+func randomSecret() []byte {
+	b := make([]byte, 32)
+	if _, err := rand.Read(b); err != nil {
+		panic("crypto/rand: " + err.Error())
+	}
+	return b
 }
 
 // openBackend opens the selected store and returns it with a human-readable
@@ -337,7 +412,6 @@ func cmdCreate(args []string) error {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	title := fs.String("title", "", "plan title (required)")
 	file := fs.String("file", "", "markdown file (default: stdin)")
-	server := serverFlag(fs)
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -348,20 +422,23 @@ func cmdCreate(args []string) error {
 	if err != nil {
 		return err
 	}
-	project := resolveProject()
-	files := snapshotFiles(workingDir(), content)
-	created, err := newClient(*server).createPlan(*title, content, project, files)
+	cl, err := resolveClient()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("%s\n%s/plans/%s/v/%d\n", created.PlanID, *server, created.PlanID, created.Number)
+	project := resolveProject()
+	files := snapshotFiles(workingDir(), content)
+	created, err := cl.createPlan(*title, content, project, files)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n%s/plans/%s/v/%d\n", created.PlanID, cl.base, created.PlanID, created.Number)
 	return nil
 }
 
 func cmdUpdate(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
 	file := fs.String("file", "", "markdown file (default: stdin)")
-	server := serverFlag(fs)
 	planID, rest := takePositional(args)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -373,12 +450,16 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
-	files := snapshotFiles(workingDir(), content)
-	created, err := newClient(*server).addVersion(planID, content, files)
+	cl, err := resolveClient()
 	if err != nil {
 		return err
 	}
-	fmt.Printf("v%d\n%s/plans/%s/v/%d\n", created.Number, *server, planID, created.Number)
+	files := snapshotFiles(workingDir(), content)
+	created, err := cl.addVersion(planID, content, files)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("v%d\n%s/plans/%s/v/%d\n", created.Number, cl.base, planID, created.Number)
 	return nil
 }
 
@@ -386,7 +467,6 @@ func cmdShow(args []string) error {
 	fs := flag.NewFlagSet("show", flag.ContinueOnError)
 	version := fs.Int("version", 0, "version number (default: latest)")
 	asJSON := fs.Bool("json", false, "JSON output")
-	server := serverFlag(fs)
 	planID, rest := takePositional(args)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -394,7 +474,11 @@ func cmdShow(args []string) error {
 	if planID == "" {
 		return fmt.Errorf("usage: planner show PLAN_ID [--version N] [--json]")
 	}
-	view, err := newClient(*server).versionView(planID, *version)
+	cl, err := resolveClient()
+	if err != nil {
+		return err
+	}
+	view, err := cl.versionView(planID, *version)
 	if err != nil {
 		return err
 	}
@@ -413,7 +497,6 @@ func cmdComments(args []string) error {
 	version := fs.Int("version", 0, "version number (default: latest)")
 	status := fs.String("status", "open", "open|all")
 	asJSON := fs.Bool("json", false, "JSON output")
-	server := serverFlag(fs)
 	planID, rest := takePositional(args)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -421,7 +504,11 @@ func cmdComments(args []string) error {
 	if planID == "" {
 		return fmt.Errorf("usage: planner comments PLAN_ID [--version N] [--status open|all] [--json]")
 	}
-	view, err := newClient(*server).versionView(planID, *version)
+	cl, err := resolveClient()
+	if err != nil {
+		return err
+	}
+	view, err := cl.versionView(planID, *version)
 	if err != nil {
 		return err
 	}
@@ -458,7 +545,6 @@ func cmdComments(args []string) error {
 func cmdReply(args []string) error {
 	fs := flag.NewFlagSet("reply", flag.ContinueOnError)
 	msg := fs.String("m", "", "reply message (default: stdin)")
-	server := serverFlag(fs)
 	commentID, rest := takePositional(args)
 	if err := fs.Parse(rest); err != nil {
 		return err
@@ -477,7 +563,11 @@ func cmdReply(args []string) error {
 	if body == "" {
 		return fmt.Errorf("reply message is empty")
 	}
-	if err := newClient(*server).reply(commentID, body); err != nil {
+	cl, err := resolveClient()
+	if err != nil {
+		return err
+	}
+	if err := cl.reply(commentID, body); err != nil {
 		return err
 	}
 	fmt.Printf("replied to %s\n", commentID)

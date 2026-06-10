@@ -12,8 +12,9 @@ import (
 
 // maxSnapshotBytes is the size ceiling for a captured file. Files at or above it
 // are skipped entirely (their reference tokens stay plain text), keeping the
-// content-addressed blob store to small, reviewable file bodies.
-const maxSnapshotBytes = 50 * 1024
+// content-addressed blob store to small, reviewable file bodies. The server's
+// plan-post body cap (8 MiB) comfortably fits dozens of max-size snapshots.
+const maxSnapshotBytes = 200 * 1024
 
 // knownBasenames are extensionless filenames common enough to treat as refs even
 // though they have no extension to match on. Case-sensitive on purpose, so prose

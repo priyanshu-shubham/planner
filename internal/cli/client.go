@@ -17,14 +17,16 @@ import (
 
 // client is a thin HTTP client for the planner JSON API. The CLI is the agent's
 // interface and talks to a running `planner serve` rather than the database
-// directly, so the server stays the single owner of the data.
+// directly, so the server stays the single owner of the data. token, when set,
+// is sent as a Bearer credential (a PAT) for authed servers.
 type client struct {
-	base string
-	http *http.Client
+	base  string
+	token string
+	http  *http.Client
 }
 
-func newClient(base string) *client {
-	return &client{base: strings.TrimRight(base, "/"), http: &http.Client{Timeout: 30 * time.Second}}
+func newClient(base, token string) *client {
+	return &client{base: strings.TrimRight(base, "/"), token: token, http: &http.Client{Timeout: 30 * time.Second}}
 }
 
 // apiReply mirrors the server's replyDTO.
@@ -80,6 +82,9 @@ func (c *client) do(method, path string, body, out any) error {
 	if body != nil {
 		req.Header.Set("Content-Type", "application/json")
 	}
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if errors.Is(err, syscall.ECONNREFUSED) || isConnErr(err) {
@@ -89,6 +94,9 @@ func (c *client) do(method, path string, body, out any) error {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("authentication required — run `planner setup --server %s`", c.base)
+	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		var e struct {
 			Error string `json:"error"`
@@ -158,4 +166,28 @@ func (c *client) versionView(planID string, number int) (apiVersionView, error) 
 func (c *client) reply(commentID, body string) error {
 	return c.do(http.MethodPost, "/api/comments/"+commentID+"/replies",
 		map[string]string{"author": "agent", "body": body}, nil)
+}
+
+// serverConfig reports the server's auth mode ("none" | "google"). It is public,
+// so it needs no token — `planner setup` calls it first to decide whether a
+// browser login is required.
+func (c *client) serverConfig() (string, error) {
+	var out struct {
+		Auth string `json:"auth"`
+	}
+	if err := c.do(http.MethodGet, "/api/config", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Auth, nil
+}
+
+// me returns the authenticated user's email, verifying the configured token.
+func (c *client) me() (string, error) {
+	var out struct {
+		Email string `json:"email"`
+	}
+	if err := c.do(http.MethodGet, "/api/me", nil, &out); err != nil {
+		return "", err
+	}
+	return out.Email, nil
 }

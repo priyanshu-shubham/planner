@@ -392,3 +392,29 @@ button.plan-project:hover { background: var(--bg); color: var(--accent); }
   font: inherit; font-size: 13px; padding: 3px 6px;
   border: 1px solid var(--border); border-radius: 7px; background: #fff; color: #1f2328;
 }
+
+/* Auth: header account avatar + menu, login/cli-setup pages. */
+.user-menu { position: relative; display: flex; align-items: center; }
+.avatar {
+  width: 30px; height: 30px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--accent); color: #fff;
+  font-size: 12px; font-weight: 600; letter-spacing: .02em; line-height: 1;
+  display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
+}
+.avatar:hover { background: #0860ca; color: #fff; }
+.user-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0; min-width: 200px; z-index: 30;
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column;
+}
+.user-dropdown-head { padding: 6px 10px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.user-dropdown-name { font-size: 13px; font-weight: 600; color: #1f2328; }
+.user-dropdown-email { font-size: 12px; color: var(--muted); margin-top: 2px; word-break: break-all; }
+.user-dropdown button {
+  text-align: left; font: inherit; font-size: 13px; padding: 7px 10px;
+  border: 0; background: none; border-radius: 7px; color: #1f2328; cursor: pointer;
+}
+.user-dropdown button:hover { background: #f3f4f6; color: var(--accent); }
+.login { max-width: 460px; }
+.login-google { display: inline-block; margin-top: 12px; text-decoration: none; }
+.filter input { font: inherit; font-size: 13px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: #1f2328; }

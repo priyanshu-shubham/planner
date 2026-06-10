@@ -16,14 +16,41 @@ import (
 
 // postgresSchema mirrors sqliteSchema: identical tables and indexes, but
 // created_at is TIMESTAMPTZ (the store writes UTC times via now()). A fresh
-// Postgres database already has every column, so there is no migrate step.
+// Postgres database already has every column; an existing one is brought up to
+// date by migratePostgres (plans.owner_id and its index).
 const postgresSchema = `
 CREATE TABLE IF NOT EXISTS plans (
   id         TEXT PRIMARY KEY,
   title      TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'active',
   project    TEXT NOT NULL DEFAULT 'No Project',
+  owner_id   TEXT,
   created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id         TEXT PRIMARY KEY,
+  google_sub TEXT NOT NULL UNIQUE,
+  email      TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  picture    TEXT NOT NULL DEFAULT '',
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS refresh_tokens (
+  token_hash TEXT PRIMARY KEY,
+  user_id    TEXT NOT NULL REFERENCES users(id),
+  expires_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS pats (
+  id           TEXT PRIMARY KEY,
+  user_id      TEXT NOT NULL REFERENCES users(id),
+  name         TEXT NOT NULL,
+  token_hash   TEXT NOT NULL UNIQUE,
+  created_at   TIMESTAMPTZ NOT NULL,
+  last_used_at TIMESTAMPTZ
 );
 
 CREATE TABLE IF NOT EXISTS versions (
@@ -77,6 +104,8 @@ CREATE INDEX IF NOT EXISTS idx_comments_version ON comments(version_id);
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_version ON version_files(version_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_sha ON version_files(sha256);
+CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
+CREATE INDEX IF NOT EXISTS idx_pats_user ON pats(user_id);
 `
 
 // OpenPostgres connects to the Postgres database named by dsn (a libpq
@@ -95,7 +124,24 @@ func OpenPostgres(dsn string) (Store, error) {
 		db.Close()
 		return nil, fmt.Errorf("apply schema: %w", err)
 	}
+	if err := migratePostgres(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	return &sqlStore{db: db, rebind: pgRebind}, nil
+}
+
+// migratePostgres brings a pre-auth Postgres database up to date. ADD COLUMN IF
+// NOT EXISTS makes it a no-op on a fresh database (which already has the column
+// from the schema), so it is safe to run on every start.
+func migratePostgres(db *sql.DB) error {
+	if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS owner_id TEXT`); err != nil {
+		return fmt.Errorf("add plans.owner_id: %w", err)
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_plans_owner ON plans(owner_id)`); err != nil {
+		return fmt.Errorf("create idx_plans_owner: %w", err)
+	}
+	return nil
 }
 
 // pgRebind rewrites the `?` placeholders the shared queries are written with to

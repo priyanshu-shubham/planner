@@ -14,6 +14,10 @@ import (
 // "latest".
 var errBadVersion = errors.New("bad version")
 
+// errBadStatus marks a non-200 response from an upstream call (e.g. Google's
+// OAuth endpoints), so the OAuth flow can fail closed without leaking specifics.
+var errBadStatus = errors.New("unexpected upstream status")
+
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(status)
@@ -26,10 +30,22 @@ func writeJSONError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// Request-body size caps. Plan posts carry referenced-file snapshots (up to
+// ~200 KB each), so they get a larger allowance than ordinary endpoints.
+const (
+	maxBodyBytes     = 1 << 20 // 1 MiB: every endpoint except plan posts
+	maxPlanPostBytes = 8 << 20 // 8 MiB: create plan / add version (file snapshots)
+)
+
 // readJSON decodes the request body into dst, writing a 400 and returning false
 // on failure.
 func readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, 1<<20)) // 1 MiB cap
+	return readJSONLimit(w, r, dst, maxBodyBytes)
+}
+
+// readJSONLimit is readJSON with an explicit body-size cap.
+func readJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
+	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())

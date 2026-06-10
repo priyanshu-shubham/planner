@@ -4,16 +4,72 @@ You are an AI coding agent (e.g. Claude Code). Follow these steps to wire this
 project into the **planner** plan-review loop: you post plans, a human reviews and
 comments in a browser.
 
-## 1. Prerequisites
+## 1. Install the CLI (if missing)
 
-- The **`planner` CLI** must be on your PATH (`planner help` to confirm). If it's
-  missing, ask the human to install it.
-- The **server** runs at **{{BASE}}**, managed by the human — **never start it
-  yourself**. The CLI defaults to `http://localhost:8080`; if {{BASE}} differs, pass
-  `--server {{BASE}}` (or set `PLANNER_SERVER={{BASE}}`). If a command can't reach
-  the server, ask the human to start it, then retry.
+Run `planner help`. If it prints usage, skip to step 2. If the command is missing,
+**you** install it — download it from the server:
 
-## 2. Add the usage section to your global `CLAUDE.md`
+macOS / Linux:
+
+```sh
+mkdir -p ~/.local/bin
+curl -fLo ~/.local/bin/planner --compressed "{{BASE}}/cli/$(uname -s | tr '[:upper:]' '[:lower:]')-$(uname -m | sed -e 's/x86_64/amd64/' -e 's/aarch64/arm64/')"
+chmod +x ~/.local/bin/planner
+```
+
+Then make sure `~/.local/bin` is on PATH for future shells (add
+`export PATH="$HOME/.local/bin:$PATH"` to the shell profile if needed).
+
+Windows (PowerShell — use `windows-arm64` on ARM machines):
+
+```powershell
+New-Item -ItemType Directory -Force "$env:LOCALAPPDATA\planner" | Out-Null
+Invoke-WebRequest "{{BASE}}/cli/windows-amd64" -OutFile "$env:LOCALAPPDATA\planner\planner.exe"
+```
+
+Then add that directory to PATH:
+`[Environment]::SetEnvironmentVariable("Path", $env:Path + ";$env:LOCALAPPDATA\planner", "User")`.
+
+If the download returns a 404, this server was built without CLI binaries — ask
+the human to install the CLI instead.
+
+One more prerequisite: the **server** runs at **{{BASE}}**, managed by the human —
+**never start it yourself**. If a command can't reach the server, ask the human to
+start it, then retry.
+
+## 2. Point the CLI at this server
+
+{{IF_NOAUTH}}
+This server needs no login. **You** run this once — it records the server (so later
+commands know where to talk) and exits:
+
+```sh
+planner setup --server {{BASE}}
+```
+{{END_NOAUTH}}
+{{IF_AUTH}}
+This server **requires a Google login**, which only a human can complete in a
+browser. Run setup **in the background** so you can read the URL it prints while it
+keeps waiting:
+
+```sh
+planner setup --server {{BASE}} &
+```
+
+It prints an **authorization URL** and listens for the result (it does not pop a
+browser when you run it). **Give that URL to the human** and ask them to open it,
+sign in with Google, and name this machine. The token is then handed back to the
+waiting `planner setup` automatically, which prints `authenticated as <email>` and
+exits. Wait for that before continuing — after it the CLI is authorized and you run
+`planner` commands normally.
+
+(If the human's browser is on a different machine than this one — e.g. you're on a
+remote box — the local listener isn't reachable: run
+`planner setup --server {{BASE}} --no-browser` and the human pastes the token shown
+on the page.)
+{{END_AUTH}}
+
+## 3. Add the usage section to your global `CLAUDE.md`
 
 Append the block below to your **global `~/.claude/CLAUDE.md`** (create it if
 needed) — the user-level memory, **not** the project's local `CLAUDE.md`. Replace
@@ -28,13 +84,22 @@ substantive `planner` create *and* update goes through plan mode — post from i
 temp file, never hand-author a plan and post it directly. Very small edits (typos,
 a line of wording) can be posted directly without entering plan mode.
 
-**Server:** {{BASE}} (default `http://localhost:8080`). Pass `--server {{BASE}}` if
-it differs. The human runs the server — never start it yourself.
+**Never run `planner serve` or `planner setup`** — the human runs the server, and
+setup is a one-time step already done. The CLI is pointed at the server and signed
+in (if it requires a login), so run the commands below directly.
+If a command can't reach the server or reports that authentication is required, ask
+the human to open the planner site and use **AI setup** again — don't try to fix it
+yourself.
 
 **A good plan** is reviewable and actionable: goal/context (1–3 sentences); an
 ordered task checklist (`- [ ] …`) small enough to verify each step; key files and
 design trade-offs; verification (tests/commands and expected results); risks and
 what's out of scope.
+
+**Reference files in the plan by their repo-relative path** so planner automatically
+shows their preview to the human — write `internal/web/server.go`, or
+with a line range `internal/web/server.go:120-140`, rather than an absolute path or
+a bare filename. Paths outside the repo (or absolute ones) render as plain text.
 
 **The loop:**
 1. **Post** the plan from plan mode's temp file — don't write a `plan.md` into the
@@ -53,7 +118,7 @@ what's out of scope.
 Other: `planner show <plan-id>` prints the latest version (`--version N` for one).
 <!-- END PLANNER -->
 
-## 3. Confirm
+## 4. Confirm
 
 Tell the user planner is set up, and that you'll post plans to {{BASE}} for review
 before implementing.

@@ -9,6 +9,7 @@ package store
 import (
 	"database/sql"
 	"errors"
+	"strings"
 	"time"
 
 	"planner/internal/id"
@@ -18,9 +19,60 @@ import (
 // and Postgres backends. rebind adapts a query written with `?` placeholders to
 // the driver's placeholder style: identity for SQLite, `?`→`$1,$2,…` for
 // Postgres. Queries here contain no literal `?`, so the rewrite is safe.
+//
+// owner scopes data access to one user (see auth.go: WithOwner). When "" the
+// store is unscoped — every query runs unfiltered, which is the single-user,
+// no-auth behavior. When set, plan-touching queries gain an owner predicate so a
+// user sees and mutates only their own plans (and pre-auth NULL-owner plans stay
+// invisible). Scope misses surface as ErrNotFound, never as an existence oracle.
 type sqlStore struct {
 	db     *sql.DB
 	rebind func(string) string
+	owner  string
+}
+
+// ownerArg is the value to store for owner_id on insert: the owner id, or SQL
+// NULL when the store is unscoped (so no-auth plans keep owner_id IS NULL).
+func (s *sqlStore) ownerArg() any {
+	if s.owner == "" {
+		return nil
+	}
+	return s.owner
+}
+
+// ownerPred returns a predicate fragment and its args restricting a query to the
+// store's owner via the plans.owner_id column referenced by col (e.g. "owner_id"
+// or "p.owner_id"). Unscoped stores get ("", nil), leaving the query unchanged.
+func (s *sqlStore) ownerPred(col string) (string, []any) {
+	if s.owner == "" {
+		return "", nil
+	}
+	return " AND " + col + "=?", []any{s.owner}
+}
+
+// ownedVersionPred returns a predicate fragment (and args) asserting that the row
+// belongs, through vcol (a versions-id column reference like "comments.version_id"),
+// to a version whose plan the store owner owns. Unscoped stores get ("", nil).
+func (s *sqlStore) ownedVersionPred(vcol string) (string, []any) {
+	if s.owner == "" {
+		return "", nil
+	}
+	return " AND EXISTS(SELECT 1 FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.id=" + vcol + " AND p.owner_id=?)", []any{s.owner}
+}
+
+// requireOwnedVersion returns ErrNotFound unless the given version's plan is owned
+// by the store owner. Callers guard the call with s.owner != "" (unscoped stores
+// own everything), so this always applies the owner predicate.
+func (s *sqlStore) requireOwnedVersion(versionID string) error {
+	var ok int
+	if err := s.db.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.id=? AND p.owner_id=?)`),
+		versionID, s.owner).Scan(&ok); err != nil {
+		return err
+	}
+	if ok == 0 {
+		return ErrNotFound
+	}
+	return nil
 }
 
 // identityRebind leaves a query untouched (SQLite uses `?` natively).
@@ -41,9 +93,9 @@ func (s *sqlStore) CreatePlan(title, content, project string, files []FileSnapsh
 	}
 	defer tx.Rollback()
 
-	p := Plan{ID: id.New("pl"), Title: title, Status: PlanActive, Project: project, CreatedAt: now()}
-	if _, err := tx.Exec(s.rebind(`INSERT INTO plans(id,title,status,project,created_at) VALUES(?,?,?,?,?)`),
-		p.ID, p.Title, p.Status, p.Project, p.CreatedAt); err != nil {
+	p := Plan{ID: id.New("pl"), Title: title, Status: PlanActive, Project: project, OwnerID: s.owner, CreatedAt: now()}
+	if _, err := tx.Exec(s.rebind(`INSERT INTO plans(id,title,status,project,owner_id,created_at) VALUES(?,?,?,?,?,?)`),
+		p.ID, p.Title, p.Status, p.Project, s.ownerArg(), p.CreatedAt); err != nil {
 		return Plan{}, Version{}, err
 	}
 	v := Version{ID: id.New("v"), PlanID: p.ID, Number: 1, Content: content, CreatedAt: now()}
@@ -85,8 +137,9 @@ func (s *sqlStore) AddVersion(planID, content string, files []FileSnapshot) (Ver
 	}
 	defer tx.Rollback()
 
+	pred, args := s.ownerPred("owner_id")
 	var exists int
-	if err := tx.QueryRow(s.rebind(`SELECT COUNT(*) FROM plans WHERE id=?`), planID).Scan(&exists); err != nil {
+	if err := tx.QueryRow(s.rebind(`SELECT COUNT(*) FROM plans WHERE id=?`+pred), append([]any{planID}, args...)...).Scan(&exists); err != nil {
 		return Version{}, err
 	}
 	if exists == 0 {
@@ -114,7 +167,9 @@ func (s *sqlStore) AddVersion(planID, content string, files []FileSnapshot) (Ver
 // GetVersionFileList returns a version's referenced-file metadata (no content),
 // ordered by path.
 func (s *sqlStore) GetVersionFileList(versionID string) ([]FileRef, error) {
-	rows, err := s.db.Query(s.rebind(`SELECT path,language,sha256 FROM version_files WHERE version_id=? ORDER BY path`), versionID)
+	pred, args := s.ownedVersionPred("version_files.version_id")
+	rows, err := s.db.Query(s.rebind(`SELECT path,language,sha256 FROM version_files WHERE version_id=?`+pred+` ORDER BY path`),
+		append([]any{versionID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -142,15 +197,19 @@ func (s *sqlStore) GetBlob(sha string) (string, error) {
 
 // GetPlan returns a plan by id with its version numbers (ascending) filled in.
 func (s *sqlStore) GetPlan(planID string) (Plan, error) {
+	pred, args := s.ownerPred("owner_id")
 	var p Plan
-	err := s.db.QueryRow(s.rebind(`SELECT id,title,status,project,created_at FROM plans WHERE id=?`), planID).
-		Scan(&p.ID, &p.Title, &p.Status, &p.Project, &p.CreatedAt)
+	var owner sql.NullString
+	err := s.db.QueryRow(s.rebind(`SELECT id,title,status,project,owner_id,created_at FROM plans WHERE id=?`+pred),
+		append([]any{planID}, args...)...).
+		Scan(&p.ID, &p.Title, &p.Status, &p.Project, &owner, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Plan{}, ErrNotFound
 	}
 	if err != nil {
 		return Plan{}, err
 	}
+	p.OwnerID = owner.String
 	if p.Versions, err = s.versionNumbers(planID); err != nil {
 		return Plan{}, err
 	}
@@ -186,21 +245,30 @@ func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 
 // GetVersion returns a specific version number of a plan.
 func (s *sqlStore) GetVersion(planID string, number int) (Version, error) {
+	pred, args := s.ownerPred("p.owner_id")
+	if pred != "" {
+		pred = ` AND EXISTS(SELECT 1 FROM plans p WHERE p.id=versions.plan_id` + pred + `)`
+	}
 	return scanVersion(s.db.QueryRow(
-		s.rebind(`SELECT id,plan_id,number,content,created_at FROM versions WHERE plan_id=? AND number=?`),
-		planID, number))
+		s.rebind(`SELECT id,plan_id,number,content,created_at FROM versions WHERE plan_id=? AND number=?`+pred),
+		append([]any{planID, number}, args...)...))
 }
 
 // ListPlans returns plan summaries ordered by most recently created first.
 func (s *sqlStore) ListPlans() ([]PlanSummary, error) {
+	pred, args := s.ownerPred("p.owner_id")
+	where := ""
+	if pred != "" {
+		where = " WHERE" + strings.TrimPrefix(pred, " AND")
+	}
 	rows, err := s.db.Query(s.rebind(`
 		SELECT p.id, p.title, p.status, p.project, p.created_at,
 		       COALESCE((SELECT MAX(number) FROM versions v WHERE v.plan_id=p.id), 0),
 		       COALESCE((SELECT COUNT(*) FROM comments c
 		                 JOIN versions v ON v.id=c.version_id
 		                 WHERE v.plan_id=p.id AND c.status='open'), 0)
-		FROM plans p
-		ORDER BY p.created_at DESC`))
+		FROM plans p`+where+`
+		ORDER BY p.created_at DESC`), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -218,6 +286,13 @@ func (s *sqlStore) ListPlans() ([]PlanSummary, error) {
 
 // AddComment attaches a comment to a version. lineStart=0 means whole-file.
 func (s *sqlStore) AddComment(versionID string, lineStart, lineEnd int, quote, body string) (Comment, error) {
+	if s.owner != "" {
+		// Confirm the target version's plan is owned before inserting; otherwise a
+		// scoped caller could attach comments to another user's version.
+		if err := s.requireOwnedVersion(versionID); err != nil {
+			return Comment{}, err
+		}
+	}
 	c := Comment{
 		ID:        id.New("c"),
 		VersionID: versionID,
@@ -243,10 +318,13 @@ func (s *sqlStore) DeleteComment(commentID string) error {
 	if _, err := tx.Exec(s.rebind(`DELETE FROM replies WHERE comment_id=?`), commentID); err != nil {
 		return err
 	}
-	res, err := tx.Exec(s.rebind(`DELETE FROM comments WHERE id=?`), commentID)
+	pred, args := s.ownedVersionPred("comments.version_id")
+	res, err := tx.Exec(s.rebind(`DELETE FROM comments WHERE id=?`+pred), append([]any{commentID}, args...)...)
 	if err != nil {
 		return err
 	}
+	// A scope miss deletes 0 rows here; the deferred rollback undoes the replies
+	// delete above, so a non-owner cannot orphan another user's reply thread.
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ErrNotFound
 	}
@@ -255,7 +333,8 @@ func (s *sqlStore) DeleteComment(commentID string) error {
 
 // SetPlanStatus updates a plan's lifecycle status (active|completed).
 func (s *sqlStore) SetPlanStatus(planID, status string) error {
-	res, err := s.db.Exec(s.rebind(`UPDATE plans SET status=? WHERE id=?`), status, planID)
+	pred, args := s.ownerPred("owner_id")
+	res, err := s.db.Exec(s.rebind(`UPDATE plans SET status=? WHERE id=?`+pred), append([]any{status, planID}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -267,7 +346,8 @@ func (s *sqlStore) SetPlanStatus(planID, status string) error {
 
 // SetPlanProject re-assigns the project a plan is grouped under.
 func (s *sqlStore) SetPlanProject(planID, project string) error {
-	res, err := s.db.Exec(s.rebind(`UPDATE plans SET project=? WHERE id=?`), project, planID)
+	pred, args := s.ownerPred("owner_id")
+	res, err := s.db.Exec(s.rebind(`UPDATE plans SET project=? WHERE id=?`+pred), append([]any{project, planID}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -285,6 +365,17 @@ func (s *sqlStore) DeletePlan(planID string) error {
 		return err
 	}
 	defer tx.Rollback()
+	// Scoped: verify ownership up front so the cascade below never touches another
+	// user's rows (the cascade keys on plan_id alone). A miss is ErrNotFound.
+	if s.owner != "" {
+		var ok int
+		if err := tx.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM plans WHERE id=? AND owner_id=?)`), planID, s.owner).Scan(&ok); err != nil {
+			return err
+		}
+		if ok == 0 {
+			return ErrNotFound
+		}
+	}
 	if _, err := tx.Exec(s.rebind(`DELETE FROM replies WHERE comment_id IN
 		(SELECT c.id FROM comments c JOIN versions v ON v.id=c.version_id WHERE v.plan_id=?)`), planID); err != nil {
 		return err
@@ -313,7 +404,8 @@ func (s *sqlStore) DeletePlan(planID string) error {
 	if _, err := tx.Exec(s.rebind(`DELETE FROM versions WHERE plan_id=?`), planID); err != nil {
 		return err
 	}
-	res, err := tx.Exec(s.rebind(`DELETE FROM plans WHERE id=?`), planID)
+	pred, args := s.ownerPred("owner_id")
+	res, err := tx.Exec(s.rebind(`DELETE FROM plans WHERE id=?`+pred), append([]any{planID}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -346,8 +438,9 @@ func (s *sqlStore) planBlobSHAs(tx *sql.Tx, planID string) ([]string, error) {
 
 // AddReply appends a reply to a comment's thread.
 func (s *sqlStore) AddReply(commentID, author, body string) (Reply, error) {
+	pred, args := s.ownedVersionPred("comments.version_id")
 	var n int
-	if err := s.db.QueryRow(s.rebind(`SELECT COUNT(*) FROM comments WHERE id=?`), commentID).Scan(&n); err != nil {
+	if err := s.db.QueryRow(s.rebind(`SELECT COUNT(*) FROM comments WHERE id=?`+pred), append([]any{commentID}, args...)...).Scan(&n); err != nil {
 		return Reply{}, err
 	}
 	if n == 0 {
@@ -385,13 +478,14 @@ func (s *sqlStore) repliesForVersion(versionID string) ([]Reply, error) {
 // attached. If openOnly, only open ones. Whole-file comments come first, then by
 // line, then by creation time.
 func (s *sqlStore) ListComments(versionID string, openOnly bool) ([]Comment, error) {
+	pred, args := s.ownedVersionPred("comments.version_id")
 	q := `SELECT id,version_id,line_start,line_end,quote,body,status,created_at
-	      FROM comments WHERE version_id=?`
+	      FROM comments WHERE version_id=?` + pred
 	if openOnly {
 		q += ` AND status='open'`
 	}
 	q += ` ORDER BY line_start ASC, created_at ASC`
-	rows, err := s.db.Query(s.rebind(q), versionID)
+	rows, err := s.db.Query(s.rebind(q), append([]any{versionID}, args...)...)
 	if err != nil {
 		return nil, err
 	}
@@ -428,7 +522,8 @@ func (s *sqlStore) ListComments(versionID string, openOnly bool) ([]Comment, err
 
 // SetCommentStatus updates a comment's status.
 func (s *sqlStore) SetCommentStatus(commentID, status string) error {
-	res, err := s.db.Exec(s.rebind(`UPDATE comments SET status=? WHERE id=?`), status, commentID)
+	pred, args := s.ownedVersionPred("comments.version_id")
+	res, err := s.db.Exec(s.rebind(`UPDATE comments SET status=? WHERE id=?`+pred), append([]any{status, commentID}, args...)...)
 	if err != nil {
 		return err
 	}
@@ -448,9 +543,10 @@ func (s *sqlStore) CarryComment(commentID string) error {
 	}
 	defer tx.Rollback()
 
+	pred, pargs := s.ownedVersionPred("comments.version_id")
 	var orig Comment
 	err = tx.QueryRow(s.rebind(`SELECT id,version_id,line_start,line_end,quote,body,status,created_at
-		FROM comments WHERE id=?`), commentID).
+		FROM comments WHERE id=?`+pred), append([]any{commentID}, pargs...)...).
 		Scan(&orig.ID, &orig.VersionID, &orig.LineStart, &orig.LineEnd, &orig.Quote, &orig.Body, &orig.Status, &orig.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return ErrNotFound

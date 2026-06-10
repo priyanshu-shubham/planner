@@ -8,6 +8,7 @@ type Plan struct {
 	Title     string
 	Status    string // "active" | "completed" | "stashed"
 	Project   string // absolute path the plan was created from; "No Project" if unknown
+	OwnerID   string // owning user's id; "" when the plan predates auth (owner_id IS NULL)
 	CreatedAt time.Time
 	Versions  []int // ascending version numbers; filled by GetPlan only
 }
@@ -41,7 +42,7 @@ type Version struct {
 type FileSnapshot struct {
 	Path     string `json:"path"`     // path as written in the plan, relative to the project root
 	Language string `json:"language"` // hljs language id for syntax highlighting ("" if unknown)
-	Content  string `json:"content"`  // the whole file body (captured only for files < 50 KB)
+	Content  string `json:"content"`  // the whole file body (captured only for files < 200 KB)
 }
 
 // FileRef is one entry in a version's file list: the metadata the frontend needs
@@ -98,4 +99,38 @@ type PlanSummary struct {
 	Plan
 	LatestVersion int
 	OpenComments  int
+}
+
+// User is a person who has signed in with Google. The store keys users by their
+// Google subject (the stable per-account id), and every owned plan points back
+// at a user id.
+type User struct {
+	ID        string
+	GoogleSub string // Google's stable subject claim; the upsert key
+	Email     string
+	Name      string
+	Picture   string // avatar URL from Google userinfo ("" if none)
+	CreatedAt time.Time
+}
+
+// RefreshToken is a stored, rotating session credential. Only the SHA-256 hash
+// of the opaque token is persisted; the token itself lives in the user's
+// httpOnly cookie. Presenting a hash with no row is treated as reuse/theft.
+type RefreshToken struct {
+	TokenHash string
+	UserID    string
+	ExpiresAt time.Time
+	CreatedAt time.Time
+}
+
+// PAT is a personal access token: a long-lived bearer credential the CLI uses.
+// As with refresh tokens, only the hash is stored. LastUsedAt is touched at most
+// once a minute so an active token does not write on every request.
+type PAT struct {
+	ID         string
+	UserID     string
+	Name       string // human label naming the machine the token lives on
+	TokenHash  string
+	CreatedAt  time.Time
+	LastUsedAt time.Time // zero value when never used
 }

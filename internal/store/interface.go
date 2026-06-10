@@ -1,6 +1,9 @@
 package store
 
-import "errors"
+import (
+	"errors"
+	"time"
+)
 
 // ErrNotFound is returned by any backend when a requested entity does not exist.
 var ErrNotFound = errors.New("not found")
@@ -44,4 +47,19 @@ type Store interface {
 	// Plan deletion / lifecycle.
 	DeletePlan(planID string) error
 	Close() error
+
+	// Auth & scoping. WithOwner returns a copy of this store scoped to one user
+	// (ownerID == "" is unscoped, the no-auth default); the remaining methods back
+	// the optional Google-login / PAT auth layer. See auth.go.
+	WithOwner(ownerID string) Store
+	UpsertUserByGoogleSub(sub, email, name, picture string) (User, error)
+	GetUser(userID string) (User, error)
+	CreateRefreshToken(userID, tokenHash string, expiresAt time.Time) error
+	RotateRefreshToken(oldHash, newHash string, expiresAt time.Time) (User, error) // ErrNotFound = reuse/unknown
+	DeleteRefreshToken(tokenHash string) error
+	CreatePAT(userID, name, tokenHash string) (PAT, error)
+	ListPATs(userID string) ([]PAT, error)
+	GetUserByPATHash(tokenHash string) (User, PAT, error)
+	TouchPAT(patID string, when time.Time) error
+	DeletePAT(userID, patID string) error
 }

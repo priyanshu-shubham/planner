@@ -31,21 +31,23 @@ func newClient(base, token string) *client {
 
 // apiReply mirrors the server's replyDTO.
 type apiReply struct {
-	ID     string `json:"id"`
-	Author string `json:"author"`
-	Body   string `json:"body"`
+	ID         string `json:"id"`
+	Author     string `json:"author"`
+	AuthorName string `json:"author_name,omitempty"`
+	Body       string `json:"body"`
 }
 
 // apiComment mirrors the server's commentDTO.
 type apiComment struct {
-	ID        string     `json:"id"`
-	LineStart int        `json:"line_start"`
-	LineEnd   int        `json:"line_end"`
-	WholeFile bool       `json:"whole_file"`
-	Quote     string     `json:"quote"`
-	Body      string     `json:"body"`
-	Status    string     `json:"status"`
-	Replies   []apiReply `json:"replies"`
+	ID         string     `json:"id"`
+	LineStart  int        `json:"line_start"`
+	LineEnd    int        `json:"line_end"`
+	WholeFile  bool       `json:"whole_file"`
+	Quote      string     `json:"quote"`
+	Body       string     `json:"body"`
+	Status     string     `json:"status"`
+	AuthorName string     `json:"author_name,omitempty"`
+	Replies    []apiReply `json:"replies"`
 }
 
 type apiVersionView struct {
@@ -162,9 +164,10 @@ func (c *client) versionView(planID string, number int) (apiVersionView, error) 
 	return out, err
 }
 
-// reply posts a reply to a comment as the agent.
-func (c *client) reply(commentID, body string) error {
-	return c.do(http.MethodPost, "/api/comments/"+commentID+"/replies",
+// reply posts a reply to a comment as the agent. Comment actions are addressed
+// under the plan (or share) id, which is the access credential.
+func (c *client) reply(planID, commentID, body string) error {
+	return c.do(http.MethodPost, "/api/plans/"+planID+"/comments/"+commentID+"/replies",
 		map[string]string{"author": "agent", "body": body}, nil)
 }
 

@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS plans (
   status     TEXT NOT NULL DEFAULT 'active',
   project    TEXT NOT NULL DEFAULT 'No Project',
   owner_id   TEXT,
+  share_id   TEXT,
   created_at TIMESTAMP NOT NULL
 );
 
@@ -74,6 +75,7 @@ CREATE TABLE IF NOT EXISTS comments (
   quote      TEXT NOT NULL DEFAULT '',
   body       TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'open',
+  author_id  TEXT,
   created_at TIMESTAMP NOT NULL
 );
 
@@ -82,6 +84,7 @@ CREATE TABLE IF NOT EXISTS replies (
   comment_id TEXT NOT NULL REFERENCES comments(id),
   author     TEXT NOT NULL,
   body       TEXT NOT NULL,
+  author_id  TEXT,
   created_at TIMESTAMP NOT NULL
 );
 
@@ -178,7 +181,64 @@ func migrate(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_plans_owner ON plans(owner_id)`); err != nil {
 		return fmt.Errorf("create idx_plans_owner: %w", err)
 	}
-	return nil
+	if err := addColumn(db, "plans", "share_id", `TEXT`); err != nil {
+		return err
+	}
+	if err := addColumn(db, "comments", "author_id", `TEXT`); err != nil {
+		return err
+	}
+	if err := addColumn(db, "replies", "author_id", `TEXT`); err != nil {
+		return err
+	}
+	// Unique: one plan per share link. SQLite treats NULLs as distinct in unique
+	// indexes, so any number of unshared (NULL share_id) plans coexist.
+	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_plans_share ON plans(share_id)`); err != nil {
+		return fmt.Errorf("create idx_plans_share: %w", err)
+	}
+	return migrateChildIDs(db)
+}
+
+// migrateChildIDs rewrites pre-composite comment/reply ids ("c_…", "r_…") to
+// the plan-prefixed form ("pl_<plan>_c_…", "pl_<plan>_r_…") that AddComment and
+// AddReply mint today. The positive match on the old prefix makes a second run
+// a no-op. The rewrite necessarily passes through states where replies point at
+// not-yet-renamed comments, and this connection runs with foreign_keys ON, so
+// FK checks are deferred to the transaction's commit.
+func migrateChildIDs(db *sql.DB) error {
+	var pending int
+	if err := db.QueryRow(`SELECT (SELECT COUNT(*) FROM comments WHERE id LIKE 'c\_%' ESCAPE '\')
+		+ (SELECT COUNT(*) FROM replies WHERE id LIKE 'r\_%' ESCAPE '\')`).Scan(&pending); err != nil {
+		return fmt.Errorf("check for pre-composite ids: %w", err)
+	}
+	if pending == 0 {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`PRAGMA defer_foreign_keys = ON`); err != nil {
+		return fmt.Errorf("defer foreign keys: %w", err)
+	}
+	// Reply rows first, while replies.comment_id still joins to the old
+	// comments.id; the comments rewrite last restores FK consistency at commit.
+	for _, q := range []string{
+		`UPDATE replies SET id = v.plan_id || '_' || replies.id
+		   FROM comments c, versions v
+		  WHERE c.id = replies.comment_id AND v.id = c.version_id AND replies.id LIKE 'r\_%' ESCAPE '\'`,
+		`UPDATE replies SET comment_id = v.plan_id || '_' || replies.comment_id
+		   FROM comments c, versions v
+		  WHERE c.id = replies.comment_id AND v.id = c.version_id AND replies.comment_id LIKE 'c\_%' ESCAPE '\'`,
+		`UPDATE comments SET id = v.plan_id || '_' || comments.id
+		   FROM versions v
+		  WHERE v.id = comments.version_id AND comments.id LIKE 'c\_%' ESCAPE '\'`,
+	} {
+		if _, err := tx.Exec(q); err != nil {
+			return fmt.Errorf("rewrite child ids: %w", err)
+		}
+	}
+	return tx.Commit()
 }
 
 // addColumn adds a column to a pre-existing table if it is not already present.

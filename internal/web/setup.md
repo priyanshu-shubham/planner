@@ -108,7 +108,7 @@ a bare filename. Paths outside the repo (or absolute ones) render as plain text.
 2. **Read feedback:** `planner comments <plan-id> --json` — each comment has `body`,
    the `quote`/lines it anchors to (or `whole_file`), and `replies`.
 3. **Respond:** reply to address, ask, or push back —
-   `planner reply <comment-id> -m "..."` (attributed to the agent). When you revise,
+   `planner reply <plan-id> <comment-id> -m "..."` (attributed to the agent). When you revise,
    **while still in plan mode** (re-enter it if you've since left), edit the
    plan-mode temp file there, then post a new version:
    `planner update <plan-id> --file <plan-mode-file>`.

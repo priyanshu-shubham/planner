@@ -31,23 +31,30 @@ type planMetaDTO struct {
 	Project  string `json:"project"`
 	Versions []int  `json:"versions"`
 	Latest   int    `json:"latest"`
+	ShareID  string `json:"share_id,omitempty"` // owner view only
 }
 
 type replyDTO struct {
-	ID     string `json:"id"`
-	Author string `json:"author"`
-	Body   string `json:"body"`
+	ID            string `json:"id"`
+	Author        string `json:"author"`
+	AuthorName    string `json:"author_name,omitempty"`
+	AuthorPicture string `json:"author_picture,omitempty"`
+	Own           bool   `json:"own,omitempty"` // authored by the requesting user
+	Body          string `json:"body"`
 }
 
 type commentDTO struct {
-	ID        string     `json:"id"`
-	LineStart int        `json:"line_start"`
-	LineEnd   int        `json:"line_end"`
-	WholeFile bool       `json:"whole_file"`
-	Quote     string     `json:"quote"`
-	Body      string     `json:"body"`
-	Status    string     `json:"status"`
-	Replies   []replyDTO `json:"replies"`
+	ID            string     `json:"id"`
+	LineStart     int        `json:"line_start"`
+	LineEnd       int        `json:"line_end"`
+	WholeFile     bool       `json:"whole_file"`
+	Quote         string     `json:"quote"`
+	Body          string     `json:"body"`
+	Status        string     `json:"status"`
+	AuthorName    string     `json:"author_name,omitempty"`
+	AuthorPicture string     `json:"author_picture,omitempty"`
+	Own           bool       `json:"own,omitempty"` // authored by the requesting user
+	Replies       []replyDTO `json:"replies"`
 }
 
 // fileRefDTO is one referenced-file metadata entry on the version view: enough
@@ -66,37 +73,111 @@ type versionViewDTO struct {
 	Content    string       `json:"content"`
 	Versions   []int        `json:"versions"`
 	Latest     int          `json:"latest"`
+	Role       string       `json:"role"`               // "owner" | "shared"
+	ShareID    string       `json:"share_id,omitempty"` // owner view only
 	Comments   []commentDTO `json:"comments"`
 	Carryover  []commentDTO `json:"carryover"`
 	PrevNumber int          `json:"prev_number"`
 	Files      []fileRefDTO `json:"files"` // referenced-file metadata (no content)
 }
 
-func toCommentDTO(c store.Comment) commentDTO {
+// isOwn reports whether a row authored by authorID belongs to the requesting
+// user (actor). Unattributed rows are nobody's "own".
+func isOwn(authorID, actor string) bool {
+	return authorID != "" && authorID == actor
+}
+
+// toCommentDTO converts a store comment to its wire shape. Stored ids are
+// composite ("<plan_id>_c_<local>"); the wire carries the short local form, the
+// inverse of the handlers' planID+"_"+cid reassembly. actor is the requesting
+// user, used to flag the rows they authored.
+func toCommentDTO(planID, actor string, c store.Comment) commentDTO {
 	replies := make([]replyDTO, 0, len(c.Replies))
 	for _, r := range c.Replies {
-		replies = append(replies, replyDTO{ID: r.ID, Author: r.Author, Body: r.Body})
+		replies = append(replies, replyDTO{
+			ID:            strings.TrimPrefix(r.ID, planID+"_"),
+			Author:        r.Author,
+			AuthorName:    r.AuthorName,
+			AuthorPicture: r.AuthorPicture,
+			Own:           isOwn(r.AuthorID, actor),
+			Body:          r.Body,
+		})
 	}
 	return commentDTO{
-		ID:        c.ID,
-		LineStart: c.LineStart,
-		LineEnd:   c.LineEnd,
-		WholeFile: c.WholeFile(),
-		Quote:     c.Quote,
-		Body:      c.Body,
-		Status:    c.Status,
-		Replies:   replies,
+		ID:            strings.TrimPrefix(c.ID, planID+"_"),
+		LineStart:     c.LineStart,
+		LineEnd:       c.LineEnd,
+		WholeFile:     c.WholeFile(),
+		Quote:         c.Quote,
+		Body:          c.Body,
+		Status:        c.Status,
+		AuthorName:    c.AuthorName,
+		AuthorPicture: c.AuthorPicture,
+		Own:           isOwn(c.AuthorID, actor),
+		Replies:       replies,
 	}
 }
 
 // toCommentDTOs builds comment DTOs from store comments (each carrying its own
 // reply thread in Comment.Replies).
-func toCommentDTOs(cs []store.Comment) []commentDTO {
+func toCommentDTOs(planID, actor string, cs []store.Comment) []commentDTO {
 	out := make([]commentDTO, 0, len(cs))
 	for _, c := range cs {
-		out = append(out, toCommentDTO(c))
+		out = append(out, toCommentDTO(planID, actor, c))
 	}
 	return out
+}
+
+// ---- Plan access resolution (canonical vs share ids) ----
+
+const (
+	roleOwner  = "owner"
+	roleShared = "shared"
+)
+
+// resolvePlan maps the {id} path value — a canonical plan id, or a share id
+// standing in for one — to a store scoped for that access, the canonical plan
+// id, and the caller's role. A share id resolves on the root store (possessing
+// the id is the authorization; the login gate has already run) to a
+// plan-grant-scoped store; anything else gets the usual owner scoping. An
+// unknown or revoked share id is store.ErrNotFound.
+func (h *handlers) resolvePlan(r *http.Request) (st store.Store, planID, role string, err error) {
+	pid := r.PathValue("id")
+	if strings.HasPrefix(pid, "share_") {
+		canonical, err := h.st.ResolveShareID(pid)
+		if err != nil {
+			return nil, "", "", err
+		}
+		// The owner following their own share link gets owner access (the plan
+		// resolves under their owner scope), so the SPA can bounce them to the
+		// canonical URL instead of showing the stripped-down shared view.
+		owned := h.store(r)
+		if _, err := owned.GetPlan(canonical); err == nil {
+			return owned, canonical, roleOwner, nil
+		}
+		return h.st.WithPlanGrant(canonical), canonical, roleShared, nil
+	}
+	return h.store(r), pid, roleOwner, nil
+}
+
+// requireOwner is resolvePlan's owner-only counterpart: a share id is refused
+// with a 403 (the caller can already view the plan, so its existence is no
+// secret) and the usual owner-scoped store is returned otherwise. The bool
+// reports whether the caller may proceed.
+func (h *handlers) requireOwner(w http.ResponseWriter, r *http.Request) (store.Store, string, bool) {
+	pid := r.PathValue("id")
+	if strings.HasPrefix(pid, "share_") {
+		writeJSONError(w, http.StatusForbidden, "owner only — a share link grants view and comment access")
+		return nil, "", false
+	}
+	return h.store(r), pid, true
+}
+
+// actorID returns the authenticated user id from the request context, or ""
+// in no-auth mode — the value stored as comment/reply author_id.
+func actorID(r *http.Request) string {
+	uid, _ := r.Context().Value(userIDKey{}).(string)
+	return uid
 }
 
 // ---- Plan endpoints ----
@@ -140,8 +221,12 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) apiPlanMeta(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	plan, err := h.store(r).GetPlan(id)
+	st, planID, role, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	plan, err := st.GetPlan(planID)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -150,11 +235,18 @@ func (h *handlers) apiPlanMeta(w http.ResponseWriter, r *http.Request) {
 	if len(plan.Versions) > 0 {
 		latest = plan.Versions[len(plan.Versions)-1]
 	}
-	writeJSON(w, http.StatusOK, planMetaDTO{plan.ID, plan.Title, plan.Status, plan.Project, plan.Versions, latest})
+	meta := planMetaDTO{ID: plan.ID, Title: plan.Title, Status: plan.Status, Project: plan.Project, Versions: plan.Versions, Latest: latest}
+	if role == roleOwner {
+		meta.ShareID = plan.ShareID
+	}
+	writeJSON(w, http.StatusOK, meta)
 }
 
 func (h *handlers) apiAddVersion(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
+	st, id, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		Content string               `json:"content"`
 		Files   []store.FileSnapshot `json:"files"`
@@ -162,7 +254,7 @@ func (h *handlers) apiAddVersion(w http.ResponseWriter, r *http.Request) {
 	if !readJSONLimit(w, r, &in, maxPlanPostBytes) {
 		return
 	}
-	v, err := h.store(r).AddVersion(id, in.Content, in.Files)
+	v, err := st.AddVersion(id, in.Content, in.Files)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -188,8 +280,11 @@ func (h *handlers) resolveVersionNumber(plan store.Plan, n string) (int, error) 
 }
 
 func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	st := h.store(r)
+	st, id, role, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
 	plan, err := st.GetPlan(id)
 	if err != nil {
 		writeNotFoundOr(w, err)
@@ -228,18 +323,23 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	writeJSON(w, http.StatusOK, versionViewDTO{
+	view := versionViewDTO{
 		PlanID:     plan.ID,
 		Title:      plan.Title,
 		Number:     version.Number,
 		Content:    version.Content,
 		Versions:   plan.Versions,
 		Latest:     latest,
-		Comments:   toCommentDTOs(comments),
-		Carryover:  toCommentDTOs(carryover),
+		Role:       role,
+		Comments:   toCommentDTOs(id, actorID(r), comments),
+		Carryover:  toCommentDTOs(id, actorID(r), carryover),
 		PrevNumber: prevNumber,
 		Files:      toFileRefDTOs(fileList),
-	})
+	}
+	if role == roleOwner {
+		view.ShareID = plan.ShareID
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 // toFileRefDTOs converts store FileRefs to their wire DTOs (metadata only).
@@ -254,8 +354,11 @@ func toFileRefDTOs(refs []store.FileRef) []fileRefDTO {
 // ---- Comment endpoints ----
 
 func (h *handlers) apiAddComment(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	st := h.store(r)
+	st, id, _, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
 	plan, err := st.GetPlan(id)
 	if err != nil {
 		writeNotFoundOr(w, err)
@@ -284,12 +387,19 @@ func (h *handlers) apiAddComment(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	c, err := st.AddComment(version.ID, in.LineStart, in.LineEnd, in.Quote, in.Body)
+	c, err := st.AddComment(id, version.ID, in.LineStart, in.LineEnd, in.Quote, in.Body, actorID(r))
 	if err != nil {
 		writeServerError(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, toCommentDTO(c))
+	writeJSON(w, http.StatusCreated, toCommentDTO(id, actorID(r), c))
+}
+
+// fullCommentID reassembles a stored composite comment id from the resolved
+// plan id and the short {cid} path value. A cid presented under the wrong plan
+// forms a key that does not exist, so membership needs no separate check.
+func fullCommentID(planID string, r *http.Request) string {
+	return planID + "_" + r.PathValue("cid")
 }
 
 func (h *handlers) apiResolveComment(w http.ResponseWriter, r *http.Request) {
@@ -301,8 +411,11 @@ func (h *handlers) apiReopenComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) setStatus(w http.ResponseWriter, r *http.Request, status string) {
-	cid := r.PathValue("id")
-	if err := h.store(r).SetCommentStatus(cid, status); err != nil {
+	st, planID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if err := st.SetCommentStatus(fullCommentID(planID, r), status); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -310,17 +423,49 @@ func (h *handlers) setStatus(w http.ResponseWriter, r *http.Request, status stri
 }
 
 func (h *handlers) apiKeepComment(w http.ResponseWriter, r *http.Request) {
-	cid := r.PathValue("id")
-	if err := h.store(r).CarryComment(cid); err != nil {
+	st, planID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if err := st.CarryComment(fullCommentID(planID, r)); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// deleteAuthorConstraint maps the caller's role to DeleteComment/DeleteReply's
+// author restriction: the owner moderates anything (""), a shared viewer may
+// remove only what they authored. The shared role exists only in authed mode
+// (resolvePlan upgrades to owner in no-auth), so the actor id is never empty
+// when constrained.
+func deleteAuthorConstraint(r *http.Request, role string) string {
+	if role == roleShared {
+		return actorID(r)
+	}
+	return ""
+}
+
 func (h *handlers) apiDeleteComment(w http.ResponseWriter, r *http.Request) {
-	cid := r.PathValue("id")
-	if err := h.store(r).DeleteComment(cid); err != nil {
+	st, planID, role, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	if err := st.DeleteComment(fullCommentID(planID, r), deleteAuthorConstraint(r, role)); err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *handlers) apiDeleteReply(w http.ResponseWriter, r *http.Request) {
+	st, planID, role, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	if err := st.DeleteReply(planID+"_"+r.PathValue("rid"), deleteAuthorConstraint(r, role)); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -328,7 +473,11 @@ func (h *handlers) apiDeleteComment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *handlers) apiAddReply(w http.ResponseWriter, r *http.Request) {
-	cid := r.PathValue("id")
+	st, planID, _, err := h.resolvePlan(r)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
 	var in struct {
 		Author string `json:"author"`
 		Body   string `json:"body"`
@@ -344,17 +493,58 @@ func (h *handlers) apiAddReply(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "body is required")
 		return
 	}
-	rep, err := h.store(r).AddReply(cid, in.Author, in.Body)
+	rep, err := st.AddReply(fullCommentID(planID, r), in.Author, in.Body, actorID(r))
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
-	writeJSON(w, http.StatusCreated, replyDTO{ID: rep.ID, Author: rep.Author, Body: rep.Body})
+	writeJSON(w, http.StatusCreated, replyDTO{
+		ID:            strings.TrimPrefix(rep.ID, planID+"_"),
+		Author:        rep.Author,
+		AuthorName:    rep.AuthorName,
+		AuthorPicture: rep.AuthorPicture,
+		Own:           isOwn(rep.AuthorID, actorID(r)),
+		Body:          rep.Body,
+	})
+}
+
+// ---- Sharing (owner only) ----
+
+// apiCreateShare mints (or returns the existing) share id for a plan. The
+// response's share id substitutes for the plan id in every read/comment URL.
+func (h *handlers) apiCreateShare(w http.ResponseWriter, r *http.Request) {
+	st, planID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	sid, err := st.EnsureShareID(planID)
+	if err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"share_id": sid})
+}
+
+// apiRevokeShare nulls the plan's share id; outstanding links then 404.
+func (h *handlers) apiRevokeShare(w http.ResponseWriter, r *http.Request) {
+	st, planID, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if err := st.ClearShareID(planID); err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // apiSetPlanStatus moves a plan through its lifecycle (active|completed|stashed).
 // The target is supplied in the body, so an unknown value is a 400.
 func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
+	st, id, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		Status string `json:"status"`
 	}
@@ -365,7 +555,7 @@ func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "status must be one of active, completed, stashed")
 		return
 	}
-	if err := h.store(r).SetPlanStatus(r.PathValue("id"), in.Status); err != nil {
+	if err := st.SetPlanStatus(id, in.Status); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -376,6 +566,10 @@ func (h *handlers) apiSetPlanStatus(w http.ResponseWriter, r *http.Request) {
 // free-form (a folder path or a repo identity); a blank value clears it back to
 // the "No Project" placeholder.
 func (h *handlers) apiSetPlanProject(w http.ResponseWriter, r *http.Request) {
+	st, id, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
 	var in struct {
 		Project string `json:"project"`
 	}
@@ -386,7 +580,7 @@ func (h *handlers) apiSetPlanProject(w http.ResponseWriter, r *http.Request) {
 	if project == "" {
 		project = store.NoProject
 	}
-	if err := h.store(r).SetPlanProject(r.PathValue("id"), project); err != nil {
+	if err := st.SetPlanProject(id, project); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}
@@ -434,8 +628,11 @@ func isHex(s string) bool {
 // ---- Plan deletion (human-only; not exposed to the agent CLI) ----
 
 func (h *handlers) apiDeletePlan(w http.ResponseWriter, r *http.Request) {
-	id := r.PathValue("id")
-	if err := h.store(r).DeletePlan(id); err != nil {
+	st, id, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	if err := st.DeletePlan(id); err != nil {
 		writeNotFoundOr(w, err)
 		return
 	}

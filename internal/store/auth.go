@@ -20,6 +20,17 @@ import (
 func (s *sqlStore) WithOwner(ownerID string) Store {
 	c := *s
 	c.owner = ownerID
+	c.grantPlan = ""
+	return &c
+}
+
+// WithPlanGrant returns a shallow copy of the store scoped to exactly one plan,
+// regardless of owner — the access a share link grants. Like WithOwner the copy
+// shares the underlying *sql.DB, is used per-request, and is never Closed.
+func (s *sqlStore) WithPlanGrant(planID string) Store {
+	c := *s
+	c.owner = ""
+	c.grantPlan = planID
 	return &c
 }
 

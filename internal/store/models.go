@@ -9,6 +9,7 @@ type Plan struct {
 	Status    string // "active" | "completed" | "stashed"
 	Project   string // absolute path the plan was created from; "No Project" if unknown
 	OwnerID   string // owning user's id; "" when the plan predates auth (owner_id IS NULL)
+	ShareID   string // capability id granting view+comment access; "" when not shared
 	CreatedAt time.Time
 	Versions  []int // ascending version numbers; filled by GetPlan only
 }
@@ -60,15 +61,18 @@ type FileRef struct {
 // whole-file comments), giving the agent sub-line precision on top of the line
 // range.
 type Comment struct {
-	ID        string
-	VersionID string
-	LineStart int
-	LineEnd   int
-	Quote     string
-	Body      string
-	Status    string // "open" | "resolved"
-	CreatedAt time.Time
-	Replies   []Reply // reply thread, oldest first; filled by ListComments only
+	ID            string // composite: "<plan_id>_c_<local>", so the key encodes plan membership
+	VersionID     string
+	LineStart     int
+	LineEnd       int
+	Quote         string
+	Body          string
+	Status        string // "open" | "resolved"
+	AuthorID      string // commenting user's id; "" in no-auth mode or for pre-attribution rows
+	AuthorName    string // display fields hydrated from users by ListComments ("" when AuthorID is "")
+	AuthorPicture string
+	CreatedAt     time.Time
+	Replies       []Reply // reply thread, oldest first; filled by ListComments only
 }
 
 // WholeFile reports whether the comment is unanchored (applies to the file).
@@ -79,14 +83,17 @@ const (
 	StatusResolved = "resolved"
 )
 
-// Reply is a message in a comment's thread, authored by either the human
+// Reply is a message in a comment's thread, authored by either a human
 // reviewer or the AI agent.
 type Reply struct {
-	ID        string
-	CommentID string
-	Author    string // "human" | "agent"
-	Body      string
-	CreatedAt time.Time
+	ID            string // composite: "<plan_id>_r_<local>", like Comment.ID
+	CommentID     string
+	Author        string // "human" | "agent"
+	AuthorID      string // replying user's id; for agent replies, the PAT's user. "" in no-auth mode
+	AuthorName    string // display fields hydrated from users ("" when AuthorID is "")
+	AuthorPicture string
+	Body          string
+	CreatedAt     time.Time
 }
 
 const (

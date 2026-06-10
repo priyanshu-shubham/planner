@@ -71,7 +71,7 @@ func TestRoundTrip(t *testing.T) {
 			}
 
 			// anchored comment on v1, with the selected text quoted
-			c, err := s.AddComment(v1.ID, 2, 2, "line2", "fix line 2")
+			c, err := s.AddComment(p.ID, v1.ID, 2, 2, "line2", "fix line 2", "")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -106,7 +106,7 @@ func TestRoundTrip(t *testing.T) {
 			}
 
 			// a reply on the v1 comment
-			if _, err := s.AddReply(c.ID, AuthorAgent, "addressed in v2"); err != nil {
+			if _, err := s.AddReply(c.ID, AuthorAgent, "addressed in v2", ""); err != nil {
 				t.Fatal(err)
 			}
 
@@ -166,13 +166,13 @@ func TestRoundTrip(t *testing.T) {
 			}
 
 			// delete the carried comment
-			if err := s.DeleteComment(carried.ID); err != nil {
+			if err := s.DeleteComment(carried.ID, ""); err != nil {
 				t.Fatal(err)
 			}
 			if v2all, _ := s.ListComments(v2.ID, false); len(v2all) != 0 {
 				t.Fatalf("v2 should have no comments after delete, got %d", len(v2all))
 			}
-			if err := s.DeleteComment("c_does_not_exist"); !errors.Is(err, ErrNotFound) {
+			if err := s.DeleteComment("c_does_not_exist", ""); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("delete of missing comment should be ErrNotFound, got %v", err)
 			}
 		})

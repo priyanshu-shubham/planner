@@ -185,7 +185,7 @@ func TestTwoUserIsolation(t *testing.T) {
 			if p.OwnerID != alice.ID {
 				t.Fatalf("created plan owner = %q, want %q", p.OwnerID, alice.ID)
 			}
-			c, err := as.AddComment(v1.ID, 1, 1, "l1", "look here")
+			c, err := as.AddComment(p.ID, v1.ID, 1, 1, "l1", "look here", alice.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -211,16 +211,16 @@ func TestTwoUserIsolation(t *testing.T) {
 			if _, err := bs.AddVersion(p.ID, "sneaky", nil); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob AddVersion = %v, want ErrNotFound", err)
 			}
-			if _, err := bs.AddComment(v1.ID, 1, 1, "", "sneaky"); !errors.Is(err, ErrNotFound) {
+			if _, err := bs.AddComment(p.ID, v1.ID, 1, 1, "", "sneaky", bob.ID); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob AddComment = %v, want ErrNotFound", err)
 			}
-			if _, err := bs.AddReply(c.ID, AuthorAgent, "sneaky"); !errors.Is(err, ErrNotFound) {
+			if _, err := bs.AddReply(c.ID, AuthorAgent, "sneaky", bob.ID); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob AddReply = %v, want ErrNotFound", err)
 			}
 			if err := bs.SetCommentStatus(c.ID, StatusResolved); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob SetCommentStatus = %v, want ErrNotFound", err)
 			}
-			if err := bs.DeleteComment(c.ID); !errors.Is(err, ErrNotFound) {
+			if err := bs.DeleteComment(c.ID, ""); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob DeleteComment = %v, want ErrNotFound", err)
 			}
 			if err := bs.CarryComment(c.ID); !errors.Is(err, ErrNotFound) {

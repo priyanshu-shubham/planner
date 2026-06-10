@@ -68,7 +68,9 @@ function UserMenu({ navigate, user }) {
         aria-expanded={open}
         aria-label="Account menu"
       >
-        {initials(user)}
+        {user.picture
+          ? <img src={user.picture} alt="" referrerPolicy="no-referrer" />
+          : initials(user)}
       </button>
       {open && (
         <div className="user-dropdown" role="menu">

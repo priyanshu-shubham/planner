@@ -116,3 +116,23 @@ export function TrashIcon() {
     </svg>
   );
 }
+
+export function BotIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2.75" y="5.25" width="10.5" height="7.5" rx="2" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M8 5V2.5M6 2.5h4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+      <circle cx="5.9" cy="8.9" r="0.9" fill="currentColor" />
+      <circle cx="10.1" cy="8.9" r="0.9" fill="currentColor" />
+    </svg>
+  );
+}
+
+export function PersonIcon() {
+  return (
+    <svg width="11" height="11" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <circle cx="8" cy="5.2" r="2.7" stroke="currentColor" strokeWidth="1.3" />
+      <path d="M2.8 13.8a5.5 5.5 0 0 1 10.4 0" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+    </svg>
+  );
+}

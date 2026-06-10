@@ -29,7 +29,7 @@ Usage:
   planner update   PLAN_ID [--file plan.md]            (reads stdin if no --file)
   planner show     PLAN_ID [--version N] [--json]
   planner comments PLAN_ID [--version N] [--status open|all] [--json]
-  planner reply    COMMENT_ID [-m MESSAGE]             (reads stdin if no -m)
+  planner reply    PLAN_ID COMMENT_ID [-m MESSAGE]     (reads stdin if no -m)
 
 Client commands talk to the server configured by 'planner setup', which resolves
 as $PLANNER_SERVER > ~/.planner/config.json > http://localhost:8080. Run
@@ -530,13 +530,17 @@ func cmdComments(args []string) error {
 	}
 	fmt.Printf("comments on v%d:\n", view.Number)
 	for _, c := range cs {
-		fmt.Printf("  [%s] (%s) %s\n", c.Status, commentLoc(c), c.ID)
+		by := ""
+		if c.AuthorName != "" {
+			by = " — " + c.AuthorName
+		}
+		fmt.Printf("  [%s] (%s) %s%s\n", c.Status, commentLoc(c), c.ID, by)
 		if c.Quote != "" {
 			fmt.Printf("      > %s\n", truncate(c.Quote, 80))
 		}
 		fmt.Printf("      %s\n", indentBody(c.Body))
 		for _, rep := range c.Replies {
-			fmt.Printf("      ↳ %s: %s\n", rep.Author, indentReply(rep.Body))
+			fmt.Printf("      ↳ %s: %s\n", replyAuthor(rep), indentReply(rep.Body))
 		}
 	}
 	return nil
@@ -545,12 +549,13 @@ func cmdComments(args []string) error {
 func cmdReply(args []string) error {
 	fs := flag.NewFlagSet("reply", flag.ContinueOnError)
 	msg := fs.String("m", "", "reply message (default: stdin)")
-	commentID, rest := takePositional(args)
+	planID, rest := takePositional(args)
+	commentID, rest := takePositional(rest)
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
-	if commentID == "" {
-		return fmt.Errorf("usage: planner reply COMMENT_ID [-m MESSAGE]")
+	if planID == "" || commentID == "" {
+		return fmt.Errorf("usage: planner reply PLAN_ID COMMENT_ID [-m MESSAGE]")
 	}
 	body := strings.TrimSpace(*msg)
 	if body == "" {
@@ -567,7 +572,7 @@ func cmdReply(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := cl.reply(commentID, body); err != nil {
+	if err := cl.reply(planID, commentID, body); err != nil {
 		return err
 	}
 	fmt.Printf("replied to %s\n", commentID)
@@ -601,6 +606,15 @@ func indentBody(b string) string {
 // "      ↳ author: " prefix.
 func indentReply(b string) string {
 	return strings.ReplaceAll(strings.TrimRight(b, "\n"), "\n", "\n        ")
+}
+
+// replyAuthor labels a reply with its role and, when attributed, the user's
+// name — e.g. `human (Jane)`.
+func replyAuthor(r apiReply) string {
+	if r.AuthorName != "" {
+		return r.Author + " (" + r.AuthorName + ")"
+	}
+	return r.Author
 }
 
 func truncate(s string, n int) string {

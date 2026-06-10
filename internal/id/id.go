@@ -19,3 +19,14 @@ func New(prefix string) string {
 	}
 	return prefix + "_" + strings.ToLower(enc.EncodeToString(b))
 }
+
+// NewLong returns a high-entropy id like "share_e5cnle..." (26 chars after the
+// prefix). Use it for capability-style ids where the id itself is the secret —
+// e.g. plan share links — rather than a mere handle like New's.
+func NewLong(prefix string) string {
+	b := make([]byte, 16) // 16 bytes -> 26 base32 chars, 128 bits
+	if _, err := rand.Read(b); err != nil {
+		panic("id: crypto/rand failed: " + err.Error())
+	}
+	return prefix + "_" + strings.ToLower(enc.EncodeToString(b))
+}

@@ -36,22 +36,43 @@ type Store interface {
 	GetVersionFileList(versionID string) ([]FileRef, error)
 	GetBlob(sha string) (string, error)
 
-	// Comments / replies.
+	// Comments / replies. Comment and reply ids are composite —
+	// "<plan_id>_c_<local>" / "<plan_id>_r_<local>" — so handlers pass full ids
+	// reassembled from the path's plan id + short id, and a short id presented
+	// under the wrong plan forms a key that simply does not exist. authorID is
+	// the acting user ("" in no-auth mode); it travels as a parameter rather
+	// than on the store because under a share grant the actor is not the owner.
+	// For the two deletes, authorID constrains the delete to rows the given
+	// user authored (shared-role self-delete); "" deletes regardless of author
+	// (the owner's moderation power, and the no-auth mode).
 	ListComments(versionID string, openOnly bool) ([]Comment, error) // Replies attached
-	AddComment(versionID string, lineStart, lineEnd int, quote, body string) (Comment, error)
+	AddComment(planID, versionID string, lineStart, lineEnd int, quote, body, authorID string) (Comment, error)
 	SetCommentStatus(commentID, status string) error
 	CarryComment(commentID string) error
-	DeleteComment(commentID string) error
-	AddReply(commentID, author, body string) (Reply, error)
+	DeleteComment(commentID, authorID string) error
+	AddReply(commentID, author, body, authorID string) (Reply, error)
+	DeleteReply(replyID, authorID string) error
+
+	// Sharing. A plan's share id is a capability: anyone authenticated who
+	// presents it gets view+comment access via WithPlanGrant. EnsureShareID
+	// creates one if absent and returns it (idempotent); ClearShareID revokes by
+	// nulling it; ResolveShareID maps a share id to its plan id (ErrNotFound for
+	// unknown/revoked) and is deliberately unscoped — the share id is the authz.
+	EnsureShareID(planID string) (string, error)
+	ClearShareID(planID string) error
+	ResolveShareID(shareID string) (string, error)
 
 	// Plan deletion / lifecycle.
 	DeletePlan(planID string) error
 	Close() error
 
 	// Auth & scoping. WithOwner returns a copy of this store scoped to one user
-	// (ownerID == "" is unscoped, the no-auth default); the remaining methods back
-	// the optional Google-login / PAT auth layer. See auth.go.
+	// (ownerID == "" is unscoped, the no-auth default); WithPlanGrant returns a
+	// copy scoped to exactly one plan regardless of owner (share-link access).
+	// The remaining methods back the optional Google-login / PAT auth layer.
+	// See auth.go.
 	WithOwner(ownerID string) Store
+	WithPlanGrant(planID string) Store
 	UpsertUserByGoogleSub(sub, email, name, picture string) (User, error)
 	GetUser(userID string) (User, error)
 	CreateRefreshToken(userID, tokenHash string, expiresAt time.Time) error

@@ -222,14 +222,19 @@ aside.sidebar::-webkit-scrollbar { display: none; }  /* WebKit */
 .reply {
   font-size: 13px; padding: 6px 9px; border-radius: 8px; background: var(--bg);
   border: 1px solid var(--border-soft);
+  display: flex; align-items: flex-start; gap: 7px;
 }
 .reply.agent { background: #eef4ff; border-color: #cfe0ff; }
-.reply .reply-author {
-  display: inline-block; font-size: 10px; text-transform: uppercase; letter-spacing: .05em;
-  font-weight: 700; color: var(--muted); margin-right: 7px;
+.reply .author-avatar { margin-top: 1px; }
+.reply .reply-body { white-space: pre-wrap; word-wrap: break-word; flex: 1; min-width: 0; }
+/* Sized to the reply's text line (not .icon-btn's 30px box) so a row with the
+   delete affordance is no taller than one without. */
+.reply .reply-del {
+  margin-left: auto; flex: none; opacity: 0; transition: opacity .12s;
+  width: 18px; height: 18px; border: 0; border-radius: 5px;
 }
-.reply.agent .reply-author { color: var(--accent); }
-.reply .reply-body { white-space: pre-wrap; word-wrap: break-word; }
+.reply .reply-del svg { width: 13px; height: 13px; }
+.reply:hover .reply-del, .reply .reply-del:focus-visible { opacity: 1; }
 .reply-toggle { margin-top: 8px; padding-left: 0; }
 .reply-form { margin-top: 8px; }
 .reply-form textarea {
@@ -402,6 +407,7 @@ button.plan-project:hover { background: var(--bg); color: var(--accent); }
   display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0;
 }
 .avatar:hover { background: #0860ca; color: #fff; }
+.avatar img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .user-dropdown {
   position: absolute; top: calc(100% + 8px); right: 0; min-width: 200px; z-index: 30;
   background: #fff; border: 1px solid var(--border); border-radius: 10px;
@@ -415,6 +421,35 @@ button.plan-project:hover { background: var(--bg); color: var(--accent); }
   border: 0; background: none; border-radius: 7px; color: #1f2328; cursor: pointer;
 }
 .user-dropdown button:hover { background: #f3f4f6; color: var(--accent); }
+/* Share link: header button + popover (owner view), mirrors the user menu. */
+.share-menu { position: relative; display: flex; align-items: center; }
+.share-dropdown {
+  position: absolute; top: calc(100% + 8px); right: 0; width: 240px; z-index: 30;
+  background: #fff; border: 1px solid var(--border); border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column;
+}
+.share-note { font-size: 12px; color: var(--muted); margin: 0; padding: 6px 10px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.share-dropdown button {
+  text-align: left; font: inherit; font-size: 13px; padding: 7px 10px;
+  border: 0; background: none; border-radius: 7px; color: #1f2328; cursor: pointer;
+}
+.share-dropdown button:hover { background: #f3f4f6; color: var(--accent); }
+.share-dropdown .share-revoke:hover { background: #fdf1f1; color: var(--danger); }
+
+/* Comment/reply author badges: every author renders as one consistent round
+   chip — profile picture or initials for humans, a bot glyph for the agent,
+   a person glyph for unattributed rows. The name lives in the tooltip. */
+.author-avatar {
+  width: 18px; height: 18px; border-radius: 50%; object-fit: cover;
+  display: inline-flex; vertical-align: middle; flex: none;
+  align-items: center; justify-content: center;
+}
+.author-initials { background: var(--accent); color: #fff; font-size: 9px; font-weight: 600; letter-spacing: .02em; }
+.agent-avatar { background: var(--accent); color: #fff; }
+.person-avatar { background: #e7ebf0; color: var(--muted); border: 1px solid var(--border-soft); }
+/* In the comment header the author sits flush right, clear of the meta text. */
+.comment-card .loc .author-avatar { margin-left: auto; }
+
 .login { max-width: 460px; }
 .login-google { display: inline-block; margin-top: 12px; text-decoration: none; }
 .filter input { font: inherit; font-size: 13px; padding: 3px 8px; border: 1px solid var(--border); border-radius: 7px; background: #fff; color: #1f2328; }

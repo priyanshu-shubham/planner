@@ -38,12 +38,18 @@ export const api = {
   // referenced-file content by sha (content-addressed, immutably cached)
   file: (sha) => req("GET", `/api/files/${sha}`),
   addComment: (id, n, c) => req("POST", `/api/plans/${id}/v/${n}/comments`, c),
-  resolveComment: (cid) => req("POST", `/api/comments/${cid}/resolve`),
-  reopenComment: (cid) => req("POST", `/api/comments/${cid}/reopen`),
-  keepComment: (cid) => req("POST", `/api/comments/${cid}/keep`),
-  deleteComment: (cid) => req("DELETE", `/api/comments/${cid}`),
+  // comment actions are addressed under the plan (or share) id — the id in the
+  // path is the access credential the server authorizes against
+  resolveComment: (id, cid) => req("POST", `/api/plans/${id}/comments/${cid}/resolve`),
+  reopenComment: (id, cid) => req("POST", `/api/plans/${id}/comments/${cid}/reopen`),
+  keepComment: (id, cid) => req("POST", `/api/plans/${id}/comments/${cid}/keep`),
+  deleteComment: (id, cid) => req("DELETE", `/api/plans/${id}/comments/${cid}`),
   // human reply (the agent replies via the CLI, author="agent")
-  addReply: (cid, body) => req("POST", `/api/comments/${cid}/replies`, { author: "human", body }),
+  addReply: (id, cid, body) => req("POST", `/api/plans/${id}/comments/${cid}/replies`, { author: "human", body }),
+  deleteReply: (id, cid, rid) => req("DELETE", `/api/plans/${id}/comments/${cid}/replies/${rid}`),
+  // share links: create-or-get the plan's share id / revoke it (owner only)
+  createShare: (id) => req("POST", `/api/plans/${id}/share`),
+  revokeShare: (id) => req("DELETE", `/api/plans/${id}/share`),
   // personal access tokens (authed mode; web-session only)
   listPats: () => req("GET", "/api/pats"),
   createPat: (name) => req("POST", "/api/pats", { name }),

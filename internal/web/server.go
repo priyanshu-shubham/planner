@@ -65,11 +65,17 @@ func newHandler(st store.Store, cfg Config) (http.Handler, error) {
 	api("POST /api/plans/{id}/versions", h.apiAddVersion)
 	api("GET /api/plans/{id}/v/{n}", h.apiVersionView)
 	api("POST /api/plans/{id}/v/{n}/comments", h.apiAddComment)
-	api("POST /api/comments/{id}/resolve", h.apiResolveComment)
-	api("POST /api/comments/{id}/reopen", h.apiReopenComment)
-	api("POST /api/comments/{id}/keep", h.apiKeepComment)
-	api("POST /api/comments/{id}/replies", h.apiAddReply)
-	api("DELETE /api/comments/{id}", h.apiDeleteComment)
+	// Comment/reply actions live under the plan path: {id} (a plan or share id)
+	// is the access credential each request is authorized against, and {cid} is
+	// the short comment id the wire uses (see fullCommentID).
+	api("POST /api/plans/{id}/comments/{cid}/resolve", h.apiResolveComment)
+	api("POST /api/plans/{id}/comments/{cid}/reopen", h.apiReopenComment)
+	api("POST /api/plans/{id}/comments/{cid}/keep", h.apiKeepComment)
+	api("POST /api/plans/{id}/comments/{cid}/replies", h.apiAddReply)
+	api("DELETE /api/plans/{id}/comments/{cid}", h.apiDeleteComment)
+	api("DELETE /api/plans/{id}/comments/{cid}/replies/{rid}", h.apiDeleteReply)
+	api("POST /api/plans/{id}/share", h.apiCreateShare)
+	api("DELETE /api/plans/{id}/share", h.apiRevokeShare)
 	api("GET /api/files/{sha}", h.apiFile) // referenced-file content, by sha
 
 	// Always-public config probe (the SPA reads it before deciding to log in).

@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS plans (
   status     TEXT NOT NULL DEFAULT 'active',
   project    TEXT NOT NULL DEFAULT 'No Project',
   owner_id   TEXT,
+  share_id   TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS comments (
   quote      TEXT NOT NULL DEFAULT '',
   body       TEXT NOT NULL,
   status     TEXT NOT NULL DEFAULT 'open',
+  author_id  TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -78,6 +80,7 @@ CREATE TABLE IF NOT EXISTS replies (
   comment_id TEXT NOT NULL REFERENCES comments(id),
   author     TEXT NOT NULL,
   body       TEXT NOT NULL,
+  author_id  TEXT,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -106,7 +109,12 @@ CREATE INDEX IF NOT EXISTS idx_version_files_version ON version_files(version_id
 CREATE INDEX IF NOT EXISTS idx_version_files_sha ON version_files(sha256);
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_pats_user ON pats(user_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_plans_share ON plans(share_id);
 `
+
+// share_id / author_id live in the CREATE TABLE statements only (no ALTERs in
+// migratePostgres, and no composite-id rewrite): the Postgres backend has no
+// deployments predating these columns, so a fresh schema is the only case.
 
 // OpenPostgres connects to the Postgres database named by dsn (a libpq
 // connection string or URL, e.g. postgres://user:pw@host:5432/db?sslmode=...),

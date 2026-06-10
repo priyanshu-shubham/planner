@@ -1,6 +1,8 @@
 /planner
 /cli-dist/
 .env
+# operator-filled deploy config — holds DB_PASSWORD and auth secrets
+deploy/planner.env
 *.db
 *.db-shm
 *.db-wal

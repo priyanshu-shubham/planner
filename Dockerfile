@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Multi-stage build for planner.
 #
 # The Go server embeds the React bundle from internal/web/static via go:embed,
@@ -19,13 +20,22 @@ RUN npm run build
 FROM golang:1.25 AS build
 WORKDIR /src
 COPY go.mod go.sum ./
-RUN go mod download
+# BuildKit cache mounts persist Go's module cache (/go/pkg/mod) and build cache
+# (/root/.cache/go-build) across builds, so a source change recompiles
+# incrementally instead of from scratch — a big win for `make cli-dist`, which
+# cross-compiles six targets every build.
+RUN --mount=type=cache,target=/go/pkg/mod \
+    go mod download
 COPY . .
 COPY --from=frontend /src/internal/web/static/ ./internal/web/static/
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /planner .
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 GOOS=linux go build -trimpath -o /planner .
 # Cross-compile the CLI matrix the server distributes at /cli/{platform}; agents
 # install a binary that exactly matches this server's version.
-RUN make cli-dist
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    make cli-dist
 
 # Stage 3: minimal runtime. distroless/static carries CA certificates (needed
 # for the Postgres TLS connection) and runs as a non-root user.

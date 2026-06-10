@@ -4,6 +4,54 @@ planner runs as a single container backed by Postgres. SQLite stays the default
 for local use; Postgres is selected with `--backend postgres` (the Docker image
 defaults to it via `PLANNER_BACKEND=postgres`).
 
+## One-shot deploy (GKE Knative + Cloud SQL)
+
+`deploy/deploy.sh` does the whole thing from one env file: provisions the database
+and user in a Cloud SQL (Postgres) instance, builds and pushes the image to Artifact
+Registry, and applies a Knative Serving `Service` to your current `kubectl` context.
+
+```sh
+cp deploy/planner.env.example deploy/planner.env   # gitignored — holds the password
+$EDITOR deploy/planner.env
+kubectl config use-context <your-gke-context>       # the deployer targets the current context
+./deploy/deploy.sh                                  # or --dry-run first
+```
+
+The script is idempotent — re-run it to ship a new version. Phases can run in
+isolation:
+
+```sh
+./deploy/deploy.sh --dry-run        # print the rendered manifest + commands, change nothing
+./deploy/deploy.sh --skip-build --skip-deploy   # just create the DB + user
+./deploy/deploy.sh --skip-db --skip-deploy      # just build + push the image
+./deploy/deploy.sh --skip-db --skip-build       # just (re)apply the Knative Service
+./deploy/deploy.sh --env path/to/other.env      # use a different env file
+```
+
+Notes:
+- **DB provisioning needs no DB connectivity.** It uses the Cloud SQL Admin API
+  (`gcloud sql databases/users create`), so it works against a private-IP-only
+  instance from your laptop. Cloud SQL auto-grants `cloudsqlsuperuser` to the user
+  it creates, so planner can create its own tables on first boot — no GRANT or
+  migration step. An existing user keeps its current password.
+- **Connectivity is Private IP direct.** The Service's DSN points at the instance's
+  private IP (auto-derived if `DB_HOST` is blank); the GKE pods reach it over the
+  cluster VPC. The DSN (with the password) is stored in a `${SERVICE_NAME}-db`
+  Secret.
+- **Builds target `linux/amd64`** (`docker build --platform linux/amd64`) so an
+  Apple-Silicon build still runs on amd64 GKE nodes — needs Docker buildx/qemu
+  (Docker Desktop ships it). Docker is assumed already authenticated to Artifact
+  Registry.
+- **Knative must already be installed** on the target cluster; the script checks for
+  the `services.serving.knative.dev` CRD and errors clearly if it's missing (it does
+  not install Knative).
+- **Auth is optional.** Set `PLANNER_AUTH=1` (plus `GOOGLE_CLIENT_ID` /
+  `GOOGLE_CLIENT_SECRET`, and ideally `PLANNER_AUTH_SECRET`) in the env file to enable
+  Google login; those land in a `${SERVICE_NAME}-auth` Secret. Auth additionally needs
+  a stable HTTPS host with the `https://YOUR_HOST/auth/google/callback` redirect
+  registered — that DNS/TLS wiring is **out of scope** for this script (see the
+  Authentication section below).
+
 ## Prerequisites
 
 - A reachable Postgres database (managed or self-hosted). Any recent version

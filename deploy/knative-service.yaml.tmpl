@@ -1,0 +1,40 @@
+# Knative Serving Service for planner. Rendered by deploy/deploy.sh via envsubst
+# and applied with kubectl. Placeholders come from deploy/planner.env plus tunables
+# defaulted in deploy.sh (MIN_SCALE/MAX_SCALE and the resource requests/limits).
+# The DSN is read from a Secret; the auth env entries are injected by the script
+# only when PLANNER_AUTH=1 (otherwise that line renders empty).
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: ${SERVICE_NAME}
+  namespace: ${NAMESPACE}
+  labels:
+    app: ${SERVICE_NAME}
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "${MIN_SCALE}"
+        autoscaling.knative.dev/maxScale: "${MAX_SCALE}"
+    spec:
+      containers:
+        - image: ${IMAGE}
+          ports:
+            - containerPort: 8080
+          env:
+            - name: PLANNER_BACKEND
+              value: postgres
+            - name: PLANNER_BASE_URL
+              value: "${PLANNER_BASE_URL}"
+            - name: PLANNER_DB
+              valueFrom:
+                secretKeyRef:
+                  name: ${DB_SECRET_NAME}
+                  key: dsn
+${AUTH_ENV_BLOCK}
+          resources:
+            requests:
+              cpu: "${CPU_REQUEST}"
+              memory: "${MEMORY_REQUEST}"
+            limits:
+              memory: "${MEMORY_LIMIT}"

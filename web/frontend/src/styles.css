@@ -182,7 +182,17 @@ pre.mermaid svg { max-width: 100%; height: auto; }
 ::selection { background: var(--sel); }
 
 /* ---- sidebar ---- */
-aside.sidebar { position: sticky; top: 76px; }
+/* The comment pane scrolls independently of the document: cap it to the
+   viewport and let it overflow internally, so scrolling comments never drags
+   the preview along. The scrollbar itself is hidden (still scrolls). */
+aside.sidebar {
+  position: sticky;
+  top: 76px;
+  max-height: calc(100vh - 92px);
+  overflow-y: auto;
+  scrollbar-width: none;          /* Firefox */
+}
+aside.sidebar::-webkit-scrollbar { display: none; }  /* WebKit */
 .sidebar h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); margin: 18px 0 8px; }
 .sidebar .hint { font-size: 12px; color: var(--muted); margin: 2px 0 12px; }
 

@@ -291,12 +291,12 @@ func (s *sqlStore) AddComment(planID, versionID string, lineStart, lineEnd int, 
 	// encodes plan membership, so a mismatch would brand the comment with a lying
 	// key — and the plan must be within scope (owned, or the granted share plan).
 	pred, args := s.planPred("p.id", "p.owner_id")
-	var ok int
+	var ok bool
 	if err := s.db.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.id=? AND v.plan_id=?`+pred+`)`),
 		append([]any{versionID, planID}, args...)...).Scan(&ok); err != nil {
 		return Comment{}, err
 	}
-	if ok == 0 {
+	if !ok {
 		return Comment{}, ErrNotFound
 	}
 	c := Comment{
@@ -423,11 +423,11 @@ func (s *sqlStore) DeletePlan(planID string) error {
 	// user's rows (the cascade keys on plan_id alone). A miss is ErrNotFound.
 	if s.scoped() {
 		pred, args := s.planPred("id", "owner_id")
-		var ok int
+		var ok bool
 		if err := tx.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM plans WHERE id=?`+pred+`)`), append([]any{planID}, args...)...).Scan(&ok); err != nil {
 			return err
 		}
-		if ok == 0 {
+		if !ok {
 			return ErrNotFound
 		}
 	}

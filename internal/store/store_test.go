@@ -328,6 +328,54 @@ func TestFileSnapshots(t *testing.T) {
 	}
 }
 
+// TestScopedDeleteAndComment verifies that DeletePlan and AddComment work
+// correctly under owner scoping — the EXISTS query must scan a boolean on
+// Postgres and an integer on SQLite without error.
+func TestScopedDeleteAndComment(t *testing.T) {
+	for name, open := range backends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			defer s.Close()
+
+			scoped := s.WithOwner("user-1")
+
+			// Create a plan owned by user-1.
+			p, v, err := scoped.CreatePlan("Scoped", "body", "/work", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			// AddComment under the same owner should succeed (exercises the
+			// EXISTS scan in AddComment).
+			if _, err := scoped.AddComment(p.ID, v.ID, 0, 0, "", "looks good", "user-1"); err != nil {
+				t.Fatalf("AddComment under owner scope: %v", err)
+			}
+
+			// A different owner must not be able to add a comment.
+			other := s.WithOwner("user-2")
+			if _, err := other.AddComment(p.ID, v.ID, 0, 0, "", "nope", "user-2"); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("AddComment by wrong owner: want ErrNotFound, got %v", err)
+			}
+
+			// A different owner must not be able to delete the plan.
+			if err := other.DeletePlan(p.ID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("DeletePlan by wrong owner: want ErrNotFound, got %v", err)
+			}
+
+			// The owning user can delete it (exercises the EXISTS scan in
+			// DeletePlan).
+			if err := scoped.DeletePlan(p.ID); err != nil {
+				t.Fatalf("DeletePlan by owner: %v", err)
+			}
+
+			// Verify it's gone.
+			if _, err := scoped.GetPlan(p.ID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetPlan after delete: want ErrNotFound, got %v", err)
+			}
+		})
+	}
+}
+
 // findSummary returns the ListPlans summary for planID, failing the test if absent.
 func findSummary(t *testing.T, s Store, planID string) PlanSummary {
 	t.Helper()

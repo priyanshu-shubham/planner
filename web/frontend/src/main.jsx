@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { auth } from "./auth.js";
 import { PlanList } from "./PlanList.jsx";
 import { VersionPage } from "./VersionPage.jsx";
+import { VersionCompare } from "./VersionCompare.jsx";
 import { Login } from "./Login.jsx";
 import { CliSetup } from "./CliSetup.jsx";
 import { CliAccess } from "./CliAccess.jsx";
@@ -28,6 +29,9 @@ export function useRouter() {
 function route(path, navigate) {
   let m = path.match(/^\/plans\/([^/]+)\/v\/(\d+)\/?$/);
   if (m) return <VersionPage planId={m[1]} number={Number(m[2])} navigate={navigate} />;
+
+  m = path.match(/^\/plans\/([^/]+)\/compare\/(\d+)\.\.\.(\d+)\/?$/);
+  if (m) return <VersionCompare planId={m[1]} from={Number(m[2])} to={Number(m[3])} navigate={navigate} />;
 
   m = path.match(/^\/plans\/([^/]+)\/?$/);
   if (m) return <PlanRedirect planId={m[1]} navigate={navigate} />;

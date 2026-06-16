@@ -3,7 +3,8 @@ import { api } from "./api.js";
 import { Header } from "./Header.jsx";
 import { MarkdownDoc } from "./MarkdownDoc.jsx";
 import { CodePreview } from "./CodePreview.jsx";
-import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, LinkIcon, BotIcon, PersonIcon } from "./icons.jsx";
+import { CommentComposer } from "./CommentComposer.jsx";
+import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, LinkIcon, BotIcon, PersonIcon, GitCompareIcon } from "./icons.jsx";
 
 // The comment pane is user-resizable between these bounds (px).
 const SIDEBAR_MIN = 280;
@@ -103,6 +104,7 @@ export function VersionPage({ planId, number, navigate }) {
   const open = view.comments.filter((c) => c.status === "open");
   const resolved = view.comments.filter((c) => c.status === "resolved");
   const openSorted = [...open].sort((a, b) => (a.whole_file === b.whole_file ? a.line_start - b.line_start : a.whole_file ? -1 : 1));
+  const compare = compareTarget(view.versions, view.number);
 
   return (
     <>
@@ -115,6 +117,16 @@ export function VersionPage({ planId, number, navigate }) {
               : <a key={n} href={`/plans/${planId}/v/${n}`} onClick={(e) => { e.preventDefault(); navigate(`/plans/${planId}/v/${n}`); }}>v{n}</a>
           ))}
         </div>
+        <button
+          className="icon-btn compare-trigger labeled"
+          disabled={!compare}
+          title={compare ? compare.title : "No other version to compare"}
+          aria-label={compare ? compare.title : "No other version to compare"}
+          onClick={() => compare && navigate(`/plans/${planId}/compare/${compare.from}...${compare.to}`)}
+        >
+          <GitCompareIcon />
+          <span className="compare-label">Compare</span>
+        </button>
         <span className="spacer" />
         {!shared && (
           <ShareButton
@@ -173,7 +185,7 @@ export function VersionPage({ planId, number, navigate }) {
       </main>
 
       {composer && (
-        <Composer
+        <CommentComposer
           composer={composer}
           onCancel={() => { setComposer(null); window.getSelection()?.removeAllRanges(); }}
           onSubmit={submitComment}
@@ -181,6 +193,14 @@ export function VersionPage({ planId, number, navigate }) {
       )}
     </>
   );
+}
+
+function compareTarget(versions, current) {
+  const sorted = [...versions].sort((a, b) => a - b);
+  const idx = sorted.indexOf(current);
+  if (idx > 0) return { from: sorted[idx - 1], to: current, title: "Compare with previous version" };
+  if (idx >= 0 && idx < sorted.length - 1) return { from: current, to: sorted[idx + 1], title: "Compare with next version" };
+  return null;
 }
 
 function PlanIdCopy({ planId }) {
@@ -469,74 +489,4 @@ function ShareButton({ planId, number, versions, shareId, shareAllVersions, shar
       )}
     </div>
   );
-}
-
-function Composer({ composer, onCancel, onSubmit }) {
-  const [body, setBody] = useState("");
-  const [copied, setCopied] = useState(false);
-  const ref = useRef(null);
-  const formRef = useRef(null);
-  useEffect(() => { ref.current?.focus(); }, []);
-
-  // Copy the full (untruncated) quote. The autofocused textarea steals the
-  // Cmd+C target, so a button is the only reliable way to copy the selection
-  // while the composer is open.
-  async function copyQuote() {
-    try {
-      await navigator.clipboard.writeText(composer.quote);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
-    } catch { /* clipboard unavailable; ignore */ }
-  }
-
-  // Dismiss on Escape or a click/tap outside — but only when the draft is empty,
-  // so a stray click never discards typed text. Cancel always closes explicitly.
-  useEffect(() => {
-    const isEmpty = () => !ref.current || !ref.current.value.trim();
-    function onKey(e) { if (e.key === "Escape" && isEmpty()) onCancel(); }
-    function onDown(e) {
-      if (formRef.current && !formRef.current.contains(e.target) && isEmpty()) onCancel();
-    }
-    document.addEventListener("keydown", onKey);
-    document.addEventListener("mousedown", onDown);
-    return () => {
-      document.removeEventListener("keydown", onKey);
-      document.removeEventListener("mousedown", onDown);
-    };
-  }, [onCancel]);
-
-  function submit(e) {
-    e.preventDefault();
-    if (body.trim()) onSubmit(body.trim());
-  }
-  return (
-    <form ref={formRef} className="composer" style={{ top: composer.top, left: composer.left }} onSubmit={submit}>
-      <div className="composer-target">
-        {composer.quote
-          ? <>
-              on “<span className="composer-quote">{truncate(composer.quote, 80)}</span>”
-              <button
-                type="button"
-                className="composer-copy icon-btn"
-                title={copied ? "Copied" : "Copy quote"}
-                aria-label={copied ? "Copied" : "Copy quote"}
-                onClick={copyQuote}
-              >
-                {copied ? <CheckIcon /> : <CopyIcon />}
-              </button>
-            </>
-          : "on the whole file"}
-      </div>
-      <textarea ref={ref} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Leave a comment for the agent…" />
-      <div className="composer-row">
-        <button type="button" className="subtle" onClick={onCancel}>Cancel</button>
-        <button type="submit" className="primary" disabled={!body.trim()}>Add comment</button>
-      </div>
-    </form>
-  );
-}
-
-function truncate(s, n) {
-  s = s.replace(/\s+/g, " ");
-  return s.length <= n ? s : s.slice(0, n - 1) + "…";
 }

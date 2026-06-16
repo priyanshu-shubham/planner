@@ -49,6 +49,24 @@ export function GitBranchIcon() {
   );
 }
 
+export function GitCompareIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="2.2" y="2.5" width="4.9" height="11" rx="1.1" stroke="currentColor" strokeWidth="1.15" />
+      <rect x="8.9" y="2.5" width="4.9" height="11" rx="1.1" stroke="currentColor" strokeWidth="1.15" />
+      <path d="M3.65 5.25h2M3.65 7.95h2M3.65 10.65h2M10.35 5.25h2M10.35 7.95h2M10.35 10.65h2" stroke="currentColor" strokeWidth="1.15" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+export function SwapIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path d="M3 5.25h9.6M10.3 3l2.3 2.25-2.3 2.25M13 10.75H3.4M5.7 8.5 3.4 10.75 5.7 13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 export function LinkIcon() {
   return (
     <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
@@ -57,6 +75,19 @@ export function LinkIcon() {
         stroke="currentColor"
         strokeWidth="1.2"
         strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
+export function CommentIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M3.25 3.1h9.5c.75 0 1.35.6 1.35 1.35v5.35c0 .75-.6 1.35-1.35 1.35H7.2l-3.15 2.2v-2.2h-.8c-.75 0-1.35-.6-1.35-1.35V4.45c0-.75.6-1.35 1.35-1.35z"
+        stroke="currentColor"
+        strokeWidth="1.15"
         strokeLinejoin="round"
       />
     </svg>

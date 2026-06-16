@@ -116,7 +116,17 @@ export function VersionPage({ planId, number, navigate }) {
           ))}
         </div>
         <span className="spacer" />
-        {!shared && <ShareButton planId={planId} shareId={view.share_id} onChange={load} />}
+        {!shared && (
+          <ShareButton
+            planId={planId}
+            number={view.number}
+            versions={view.versions}
+            shareId={view.share_id}
+            shareAllVersions={view.share_all_versions}
+            shareVersions={view.share_versions || []}
+            onChange={load}
+          />
+        )}
         <span className="mono">{planId}</span>
       </Header>
 
@@ -314,9 +324,11 @@ function Carryover({ planId, items, prev, onChange }) {
 // ShareButton (owner view only) manages the plan's share link: a popover with
 // copy and revoke. The link is the plan URL with the share id in place of the
 // plan id; anyone signed in can open it to view and comment.
-function ShareButton({ planId, shareId, onChange }) {
+function ShareButton({ planId, number, versions, shareId, shareAllVersions, shareVersions, onChange }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [mode, setMode] = useState("selected");
+  const [selected, setSelected] = useState(() => new Set([number]));
   const ref = useRef(null);
 
   useEffect(() => {
@@ -331,9 +343,29 @@ function ShareButton({ planId, shareId, onChange }) {
     };
   }, [open]);
 
+  useEffect(() => {
+    if (!open) return;
+    setMode(shareId && shareAllVersions ? "all" : "selected");
+    const initial = shareId && shareVersions.length > 0 ? shareVersions : [number];
+    setSelected(new Set(initial));
+  }, [open, shareId, shareAllVersions, shareVersions, number]);
+
+  function toggleVersion(n) {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(n)) next.delete(n);
+      else next.add(n);
+      return next;
+    });
+  }
+
   async function copyLink() {
-    // Idempotent: returns the existing share id when the plan is already shared.
-    const { share_id } = await api.createShare(planId);
+    const chosen = [...selected].sort((a, b) => a - b);
+    if (mode === "selected" && chosen.length === 0) return;
+    const policy = mode === "all"
+      ? { all_versions: true }
+      : { all_versions: false, versions: chosen };
+    const { share_id } = await api.createShare(planId, policy);
     try {
       await navigator.clipboard.writeText(`${window.location.origin}/plans/${share_id}`);
       setCopied(true);
@@ -352,7 +384,10 @@ function ShareButton({ planId, shareId, onChange }) {
     <div className="share-menu" ref={ref}>
       <button
         className="setup-link"
-        onClick={() => setOpen((o) => !o)}
+        onClick={() => setOpen((o) => {
+          if (!o) setCopied(false);
+          return !o;
+        })}
         title="Share this plan with other users"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -363,10 +398,40 @@ function ShareButton({ planId, shareId, onChange }) {
         <div className="share-dropdown" role="menu">
           <p className="share-note">
             {shareId
-              ? "This plan has an active share link. Anyone signed in with it can view and comment."
-              : "Create a link that lets anyone signed in view and comment on this plan."}
+              ? "This plan has an active share link."
+              : "Create a link for signed-in viewers."}
           </p>
-          <button role="menuitem" onClick={copyLink}>
+          <div className="share-mode" role="group" aria-label="Shared versions">
+            <button
+              type="button"
+              className={mode === "selected" ? "active" : ""}
+              onClick={() => setMode("selected")}
+            >
+              Selected
+            </button>
+            <button
+              type="button"
+              className={mode === "all" ? "active" : ""}
+              onClick={() => setMode("all")}
+            >
+              All
+            </button>
+          </div>
+          {mode === "selected" && (
+            <div className="share-version-list">
+              {versions.map((n) => (
+                <label key={n} className="share-version-option">
+                  <input
+                    type="checkbox"
+                    checked={selected.has(n)}
+                    onChange={() => toggleVersion(n)}
+                  />
+                  <span>v{n}</span>
+                </label>
+              ))}
+            </div>
+          )}
+          <button role="menuitem" onClick={copyLink} disabled={mode === "selected" && selected.size === 0}>
             {copied ? "Copied!" : shareId ? "Copy share link" : "Create & copy link"}
           </button>
           {shareId && (

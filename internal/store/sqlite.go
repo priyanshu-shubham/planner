@@ -27,6 +27,7 @@ CREATE TABLE IF NOT EXISTS plans (
   project    TEXT NOT NULL DEFAULT 'No Project',
   owner_id   TEXT,
   share_id   TEXT,
+  share_scope TEXT NOT NULL DEFAULT 'all',
   created_at TIMESTAMP NOT NULL
 );
 
@@ -106,11 +107,20 @@ CREATE TABLE IF NOT EXISTS version_files (
   PRIMARY KEY(version_id, path)
 );
 
+-- Selected versions exposed by a plan's share link when plans.share_scope is
+-- 'selected'. 'all' scope ignores this table.
+CREATE TABLE IF NOT EXISTS share_versions (
+  plan_id    TEXT NOT NULL REFERENCES plans(id),
+  version_id TEXT NOT NULL REFERENCES versions(id),
+  PRIMARY KEY(plan_id, version_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_versions_plan ON versions(plan_id);
 CREATE INDEX IF NOT EXISTS idx_comments_version ON comments(version_id);
 CREATE INDEX IF NOT EXISTS idx_replies_comment ON replies(comment_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_version ON version_files(version_id);
 CREATE INDEX IF NOT EXISTS idx_version_files_sha ON version_files(sha256);
+CREATE INDEX IF NOT EXISTS idx_share_versions_version ON share_versions(version_id);
 CREATE INDEX IF NOT EXISTS idx_refresh_user ON refresh_tokens(user_id);
 CREATE INDEX IF NOT EXISTS idx_pats_user ON pats(user_id);
 `
@@ -182,6 +192,9 @@ func migrate(db *sql.DB) error {
 		return fmt.Errorf("create idx_plans_owner: %w", err)
 	}
 	if err := addColumn(db, "plans", "share_id", `TEXT`); err != nil {
+		return err
+	}
+	if err := addColumn(db, "plans", "share_scope", `TEXT NOT NULL DEFAULT 'all'`); err != nil {
 		return err
 	}
 	if err := addColumn(db, "comments", "author_id", `TEXT`); err != nil {

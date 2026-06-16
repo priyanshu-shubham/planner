@@ -191,6 +191,105 @@ func TestPlanGrantScope(t *testing.T) {
 	}
 }
 
+// TestShareVersionPolicy verifies that a share grant can expose only selected
+// versions of a plan, and that switching back to all versions restores the
+// historical share-link behavior.
+func TestShareVersionPolicy(t *testing.T) {
+	for name, open := range backends() {
+		t.Run(name, func(t *testing.T) {
+			root := open(t)
+			defer root.Close()
+
+			alice := mkUser(t, root, "alice")
+			bob := mkUser(t, root, "bob")
+			as := root.WithOwner(alice.ID)
+
+			p, v1, err := as.CreatePlan("A", "v1", "/w", []FileSnapshot{{Path: "a.go", Content: "package a\n"}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v2, err := as.AddVersion(p.ID, "v2", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := as.AddVersion(p.ID, "v3", nil); err != nil {
+				t.Fatal(err)
+			}
+
+			sid, err := as.SetSharePolicy(p.ID, false, []int{2, 2})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, err := root.ResolveShareID(sid); err != nil || got != p.ID {
+				t.Fatalf("ResolveShareID = %q, %v; want %q", got, err, p.ID)
+			}
+
+			ownerPlan, err := as.GetPlan(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ownerPlan.ShareAllVersions || len(ownerPlan.ShareVersions) != 1 || ownerPlan.ShareVersions[0] != 2 {
+				t.Fatalf("owner share policy = all:%v versions:%v, want selected [2]", ownerPlan.ShareAllVersions, ownerPlan.ShareVersions)
+			}
+			if len(ownerPlan.Versions) != 3 {
+				t.Fatalf("owner versions = %v, want all versions", ownerPlan.Versions)
+			}
+
+			g := root.WithPlanGrant(p.ID)
+			sharedPlan, err := g.GetPlan(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(sharedPlan.Versions) != 1 || sharedPlan.Versions[0] != 2 {
+				t.Fatalf("shared versions = %v, want [2]", sharedPlan.Versions)
+			}
+			if _, err := g.GetVersion(p.ID, 1); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("shared GetVersion(v1) = %v, want ErrNotFound", err)
+			}
+			if got, err := g.GetVersion(p.ID, 2); err != nil || got.ID != v2.ID {
+				t.Fatalf("shared GetVersion(v2) = %+v, %v; want v2", got, err)
+			}
+			if _, err := g.GetVersion(p.ID, 3); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("shared GetVersion(v3) = %v, want ErrNotFound", err)
+			}
+			if _, err := g.AddComment(p.ID, v1.ID, 1, 1, "", "hidden", bob.ID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("shared AddComment(v1) = %v, want ErrNotFound", err)
+			}
+			if _, err := g.AddComment(p.ID, v2.ID, 1, 1, "", "visible", bob.ID); err != nil {
+				t.Fatalf("shared AddComment(v2): %v", err)
+			}
+			if refs, err := g.GetVersionFileList(v1.ID); err != nil || len(refs) != 0 {
+				t.Fatalf("shared GetVersionFileList(v1) = %d, %v; want hidden empty list", len(refs), err)
+			}
+			if summaries, err := g.ListPlans(); err != nil || len(summaries) != 1 || summaries[0].LatestVersion != 2 || summaries[0].OpenComments != 1 {
+				t.Fatalf("shared ListPlans = %+v, %v; want latest/open on selected version", summaries, err)
+			}
+
+			if _, err := as.SetSharePolicy(p.ID, false, []int{99}); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("SetSharePolicy unknown version = %v, want ErrNotFound", err)
+			}
+			sharedPlan, err = g.GetPlan(p.ID)
+			if err != nil || len(sharedPlan.Versions) != 1 || sharedPlan.Versions[0] != 2 {
+				t.Fatalf("policy should remain selected [2] after failed update: %+v err=%v", sharedPlan.Versions, err)
+			}
+
+			if _, err := as.SetSharePolicy(p.ID, true, nil); err != nil {
+				t.Fatal(err)
+			}
+			sharedPlan, err = g.GetPlan(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(sharedPlan.Versions) != 3 {
+				t.Fatalf("all-version share versions = %v, want all", sharedPlan.Versions)
+			}
+			if _, err := g.GetVersion(p.ID, 1); err != nil {
+				t.Fatalf("all-version share GetVersion(v1): %v", err)
+			}
+		})
+	}
+}
+
 // TestCarryCommentAttribution: the carried copy and its replies keep author_id
 // and get fresh plan-prefixed ids.
 func TestCarryCommentAttribution(t *testing.T) {

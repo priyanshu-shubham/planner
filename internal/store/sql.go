@@ -67,11 +67,31 @@ func (s *sqlStore) planPred(idCol, ownerCol string) (string, []any) {
 // "comments.version_id"), to a version of a plan within the store's scope —
 // owned, or the granted share plan. Unscoped stores get ("", nil).
 func (s *sqlStore) accessibleVersionPred(vcol string) (string, []any) {
-	pred, args := s.planPred("p.id", "p.owner_id")
+	pred, args := s.versionPlanAccessPred("p", "v.id")
 	if pred == "" {
 		return "", nil
 	}
 	return " AND EXISTS(SELECT 1 FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.id=" + vcol + pred + ")", args
+}
+
+func (s *sqlStore) versionPlanAccessPred(planAlias, versionIDCol string) (string, []any) {
+	pred, args := s.planPred(planAlias+".id", planAlias+".owner_id")
+	pred += s.grantVersionFilterForPlan(versionIDCol, planAlias)
+	return pred, args
+}
+
+func (s *sqlStore) grantVersionFilterForPlan(versionIDCol, planAlias string) string {
+	return s.grantVersionFilter(versionIDCol, planAlias+".id", planAlias+".share_scope")
+}
+
+// grantVersionFilter is the only SQL fragment that applies selected-version share
+// policy. Owner and unscoped stores do not filter versions; share-grant stores
+// see all versions only when the plan's share scope is all.
+func (s *sqlStore) grantVersionFilter(versionIDCol, planIDCol, shareScopeCol string) string {
+	if s.grantPlan == "" {
+		return ""
+	}
+	return " AND (" + shareScopeCol + "='all' OR EXISTS(SELECT 1 FROM share_versions sv WHERE sv.plan_id=" + planIDCol + " AND sv.version_id=" + versionIDCol + "))"
 }
 
 // identityRebind leaves a query untouched (SQLite uses `?` natively).
@@ -92,7 +112,7 @@ func (s *sqlStore) CreatePlan(title, content, project string, files []FileSnapsh
 	}
 	defer tx.Rollback()
 
-	p := Plan{ID: id.New("pl"), Title: title, Status: PlanActive, Project: project, OwnerID: s.owner, CreatedAt: now()}
+	p := Plan{ID: id.New("pl"), Title: title, Status: PlanActive, Project: project, OwnerID: s.owner, ShareAllVersions: true, CreatedAt: now()}
 	if _, err := tx.Exec(s.rebind(`INSERT INTO plans(id,title,status,project,owner_id,created_at) VALUES(?,?,?,?,?,?)`),
 		p.ID, p.Title, p.Status, p.Project, s.ownerArg(), p.CreatedAt); err != nil {
 		return Plan{}, Version{}, err
@@ -199,9 +219,10 @@ func (s *sqlStore) GetPlan(planID string) (Plan, error) {
 	pred, args := s.planPred("id", "owner_id")
 	var p Plan
 	var owner, share sql.NullString
-	err := s.db.QueryRow(s.rebind(`SELECT id,title,status,project,owner_id,share_id,created_at FROM plans WHERE id=?`+pred),
+	var shareScope string
+	err := s.db.QueryRow(s.rebind(`SELECT id,title,status,project,owner_id,share_id,share_scope,created_at FROM plans WHERE id=?`+pred),
 		append([]any{planID}, args...)...).
-		Scan(&p.ID, &p.Title, &p.Status, &p.Project, &owner, &share, &p.CreatedAt)
+		Scan(&p.ID, &p.Title, &p.Status, &p.Project, &owner, &share, &shareScope, &p.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Plan{}, ErrNotFound
 	}
@@ -210,18 +231,46 @@ func (s *sqlStore) GetPlan(planID string) (Plan, error) {
 	}
 	p.OwnerID = owner.String
 	p.ShareID = share.String
+	p.ShareAllVersions = shareScope != "selected"
 	if p.Versions, err = s.versionNumbers(planID); err != nil {
 		return Plan{}, err
+	}
+	if s.grantPlan == "" && !p.ShareAllVersions {
+		if p.ShareVersions, err = s.shareVersionNumbers(planID); err != nil {
+			return Plan{}, err
+		}
 	}
 	return p, nil
 }
 
 // versionNumbers returns a plan's version numbers in ascending order.
 func (s *sqlStore) versionNumbers(planID string) ([]int, error) {
-	rows, err := s.db.Query(s.rebind(`SELECT number FROM versions WHERE plan_id=? ORDER BY number ASC`), planID)
+	if s.grantPlan == "" {
+		rows, err := s.db.Query(s.rebind(`SELECT number FROM versions WHERE plan_id=? ORDER BY number ASC`), planID)
+		if err != nil {
+			return nil, err
+		}
+		return scanInts(rows)
+	}
+	rows, err := s.db.Query(s.rebind(`SELECT v.number FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.plan_id=?`+
+		s.grantVersionFilterForPlan("v.id", "p")+` ORDER BY v.number ASC`), planID)
 	if err != nil {
 		return nil, err
 	}
+	return scanInts(rows)
+}
+
+// shareVersionNumbers returns the selected version numbers for a plan's share
+// link. It is independent of the active scope so owners can manage the policy.
+func (s *sqlStore) shareVersionNumbers(planID string) ([]int, error) {
+	rows, err := s.db.Query(s.rebind(`SELECT v.number FROM share_versions sv JOIN versions v ON v.id=sv.version_id WHERE sv.plan_id=? ORDER BY v.number ASC`), planID)
+	if err != nil {
+		return nil, err
+	}
+	return scanInts(rows)
+}
+
+func scanInts(rows *sql.Rows) ([]int, error) {
 	defer rows.Close()
 	var nums []int
 	for rows.Next() {
@@ -245,10 +294,7 @@ func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 
 // GetVersion returns a specific version number of a plan.
 func (s *sqlStore) GetVersion(planID string, number int) (Version, error) {
-	pred, args := s.planPred("p.id", "p.owner_id")
-	if pred != "" {
-		pred = ` AND EXISTS(SELECT 1 FROM plans p WHERE p.id=versions.plan_id` + pred + `)`
-	}
+	pred, args := s.accessibleVersionPred("versions.id")
 	return scanVersion(s.db.QueryRow(
 		s.rebind(`SELECT id,plan_id,number,content,created_at FROM versions WHERE plan_id=? AND number=?`+pred),
 		append([]any{planID, number}, args...)...))
@@ -261,12 +307,13 @@ func (s *sqlStore) ListPlans() ([]PlanSummary, error) {
 	if pred != "" {
 		where = " WHERE" + strings.TrimPrefix(pred, " AND")
 	}
+	versionScope := s.grantVersionFilterForPlan("v.id", "p")
 	rows, err := s.db.Query(s.rebind(`
 		SELECT p.id, p.title, p.status, p.project, p.created_at,
-		       COALESCE((SELECT MAX(number) FROM versions v WHERE v.plan_id=p.id), 0),
+		       COALESCE((SELECT MAX(number) FROM versions v WHERE v.plan_id=p.id`+versionScope+`), 0),
 		       COALESCE((SELECT COUNT(*) FROM comments c
 		                 JOIN versions v ON v.id=c.version_id
-		                 WHERE v.plan_id=p.id AND c.status='open'), 0)
+		                 WHERE v.plan_id=p.id AND c.status='open'`+versionScope+`), 0)
 		FROM plans p`+where+`
 		ORDER BY p.created_at DESC`), args...)
 	if err != nil {
@@ -290,7 +337,7 @@ func (s *sqlStore) AddComment(planID, versionID string, lineStart, lineEnd int, 
 	// The version must belong to the named plan — the composite id minted below
 	// encodes plan membership, so a mismatch would brand the comment with a lying
 	// key — and the plan must be within scope (owned, or the granted share plan).
-	pred, args := s.planPred("p.id", "p.owner_id")
+	pred, args := s.versionPlanAccessPred("p", "v.id")
 	var ok bool
 	if err := s.db.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM versions v JOIN plans p ON p.id=v.plan_id WHERE v.id=? AND v.plan_id=?`+pred+`)`),
 		append([]any{versionID, planID}, args...)...).Scan(&ok); err != nil {
@@ -437,6 +484,9 @@ func (s *sqlStore) DeletePlan(planID string) error {
 	}
 	if _, err := tx.Exec(s.rebind(`DELETE FROM comments WHERE version_id IN
 		(SELECT id FROM versions WHERE plan_id=?)`), planID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(s.rebind(`DELETE FROM share_versions WHERE plan_id=?`), planID); err != nil {
 		return err
 	}
 	// Drop this plan's version → file links, then sweep any blob those links

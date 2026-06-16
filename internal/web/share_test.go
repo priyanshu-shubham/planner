@@ -2,7 +2,9 @@ package web
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -265,6 +267,168 @@ func TestShareLinkAccess(t *testing.T) {
 	if code, _ := getView(planID, at); code != http.StatusOK {
 		t.Fatalf("alice view after revoke = %d, want 200", code)
 	}
+}
+
+// TestShareLinkVersionPolicy covers the HTTP behavior for selected-version and
+// all-version share links: shared viewers only see allowed versions, direct
+// guesses to hidden versions 404, and old no-body share creation still exposes
+// the whole plan.
+func TestShareLinkVersionPolicy(t *testing.T) {
+	cfg := authCfg()
+	srv, st := newTestServer(t, cfg)
+	a, _ := st.UpsertUserByGoogleSub("sub-a", "a@x.com", "Alice", "")
+	b, _ := st.UpsertUserByGoogleSub("sub-b", "b@x.com", "Bob", "")
+	at, _ := mintAccess(cfg.Auth.Secret, a.ID, accessTTL)
+	bt, _ := mintAccess(cfg.Auth.Secret, b.ID, accessTTL)
+
+	resp := do(t, srv, "POST", "/api/plans", at, map[string]any{"title": "Selective", "content": "v1"})
+	var created struct {
+		PlanID string `json:"plan_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&created)
+	resp.Body.Close()
+	planID := created.PlanID
+	for _, body := range []string{"v2", "v3"} {
+		resp = do(t, srv, "POST", "/api/plans/"+planID+"/versions", at, map[string]any{"content": body})
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("add version = %d, want 201", resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	resp = do(t, srv, "POST", "/api/plans/"+planID+"/share", at, map[string]any{"all_versions": false, "versions": []int{2}})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("selected share = %d, want 200", resp.StatusCode)
+	}
+	var sh struct {
+		ShareID string `json:"share_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&sh)
+	resp.Body.Close()
+	if !strings.HasPrefix(sh.ShareID, "share_") {
+		t.Fatalf("share id = %q", sh.ShareID)
+	}
+
+	var meta struct {
+		Versions []int `json:"versions"`
+		Latest   int   `json:"latest"`
+	}
+	resp = do(t, srv, "GET", "/api/plans/"+sh.ShareID, bt, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("shared meta = %d, want 200", resp.StatusCode)
+	}
+	json.NewDecoder(resp.Body).Decode(&meta)
+	resp.Body.Close()
+	if meta.Latest != 2 || len(meta.Versions) != 1 || meta.Versions[0] != 2 {
+		t.Fatalf("shared meta = %+v, want only v2", meta)
+	}
+
+	var sharedView struct {
+		Role     string `json:"role"`
+		Number   int    `json:"number"`
+		Versions []int  `json:"versions"`
+	}
+	resp = do(t, srv, "GET", "/api/plans/"+sh.ShareID+"/v/2", bt, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("shared v2 view = %d, want 200", resp.StatusCode)
+	}
+	json.NewDecoder(resp.Body).Decode(&sharedView)
+	resp.Body.Close()
+	if sharedView.Role != "shared" || sharedView.Number != 2 || len(sharedView.Versions) != 1 || sharedView.Versions[0] != 2 {
+		t.Fatalf("shared view = %+v, want shared v2 only", sharedView)
+	}
+	for _, n := range []int{1, 3} {
+		resp = do(t, srv, "GET", "/api/plans/"+sh.ShareID+"/v/"+strconv.Itoa(n), bt, nil)
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("shared hidden v%d = %d, want 404", n, resp.StatusCode)
+		}
+		resp.Body.Close()
+		resp = do(t, srv, "POST", "/api/plans/"+sh.ShareID+"/v/"+strconv.Itoa(n)+"/comments", bt,
+			map[string]any{"line_start": 1, "line_end": 1, "body": "hidden"})
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("shared comment hidden v%d = %d, want 404", n, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+	resp = do(t, srv, "POST", "/api/plans/"+sh.ShareID+"/v/2/comments", bt,
+		map[string]any{"line_start": 1, "line_end": 1, "body": "visible"})
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("shared comment v2 = %d, want 201", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	var ownerView struct {
+		Role             string `json:"role"`
+		ShareAllVersions bool   `json:"share_all_versions"`
+		ShareVersions    []int  `json:"share_versions"`
+		Versions         []int  `json:"versions"`
+	}
+	resp = do(t, srv, "GET", "/api/plans/"+planID+"/v/1", at, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("owner view = %d, want 200", resp.StatusCode)
+	}
+	json.NewDecoder(resp.Body).Decode(&ownerView)
+	resp.Body.Close()
+	if ownerView.Role != "owner" || ownerView.ShareAllVersions || len(ownerView.ShareVersions) != 1 || ownerView.ShareVersions[0] != 2 || len(ownerView.Versions) != 3 {
+		t.Fatalf("owner share policy view = %+v, want selected v2 and all owner versions", ownerView)
+	}
+
+	resp = do(t, srv, "POST", "/api/plans/"+planID+"/share", at, map[string]any{"all_versions": true})
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("all-version share = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+	for _, n := range []int{1, 3} {
+		resp = do(t, srv, "GET", "/api/plans/"+sh.ShareID+"/v/"+strconv.Itoa(n), bt, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("all-version shared v%d = %d, want 200", n, resp.StatusCode)
+		}
+		resp.Body.Close()
+	}
+
+	resp = do(t, srv, "POST", "/api/plans/"+planID+"/share", at, map[string]any{"all_versions": false, "versions": []int{99}})
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("share unknown version = %d, want 404", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	resp = do(t, srv, "POST", "/api/plans", at, map[string]any{"title": "Legacy", "content": "v1"})
+	var legacy struct {
+		PlanID string `json:"plan_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&legacy)
+	resp.Body.Close()
+	resp = do(t, srv, "POST", "/api/plans/"+legacy.PlanID+"/versions", at, map[string]any{"content": "v2"})
+	resp.Body.Close()
+	resp = do(t, srv, "POST", "/api/plans/"+legacy.PlanID+"/share", at, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("legacy no-body share = %d, want 200", resp.StatusCode)
+	}
+	var legacyShare struct {
+		ShareID string `json:"share_id"`
+	}
+	json.NewDecoder(resp.Body).Decode(&legacyShare)
+	resp.Body.Close()
+	resp = do(t, srv, "GET", "/api/plans/"+legacyShare.ShareID+"/v/2", bt, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("legacy shared v2 = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	req, err := http.NewRequest("POST", srv.URL+"/api/plans/"+legacy.PlanID+"/share", io.NopCloser(strings.NewReader("")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ContentLength = -1
+	req.Header.Set("Authorization", "Bearer "+at)
+	resp, err = srv.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("legacy unknown-length no-body share = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
 }
 
 // TestCommentRoutesNoAuth: the plan-scoped comment routes work in no-auth mode

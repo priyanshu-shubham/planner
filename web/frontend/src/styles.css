@@ -439,16 +439,32 @@ button.plan-project:hover { background: var(--bg); color: var(--accent); }
 /* Share link: header button + popover (owner view), mirrors the user menu. */
 .share-menu { position: relative; display: flex; align-items: center; }
 .share-dropdown {
-  position: absolute; top: calc(100% + 8px); right: 0; width: 240px; z-index: 30;
+  position: absolute; top: calc(100% + 8px); right: 0; width: 260px; z-index: 30;
   background: #fff; border: 1px solid var(--border); border-radius: 10px;
   box-shadow: 0 8px 24px rgba(0,0,0,.12); padding: 6px; display: flex; flex-direction: column;
 }
 .share-note { font-size: 12px; color: var(--muted); margin: 0; padding: 6px 10px 8px; border-bottom: 1px solid var(--border); margin-bottom: 6px; }
+.share-mode {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 4px; padding: 4px;
+  border: 1px solid var(--border-soft); border-radius: 8px; background: #f6f8fa; margin: 2px 4px 6px;
+}
+.share-dropdown .share-mode button { text-align: center; padding: 5px 8px; }
+.share-dropdown .share-mode button.active { background: #fff; color: var(--accent); box-shadow: 0 1px 2px rgba(0,0,0,.08); }
+.share-version-list {
+  max-height: 150px; overflow: auto; padding: 2px 4px 6px;
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px;
+}
+.share-version-option {
+  display: flex; align-items: center; gap: 5px; font-size: 12px; padding: 4px 6px;
+  border: 1px solid var(--border-soft); border-radius: 7px; color: #1f2328; background: #fff;
+}
+.share-version-option input { margin: 0; }
 .share-dropdown button {
   text-align: left; font: inherit; font-size: 13px; padding: 7px 10px;
   border: 0; background: none; border-radius: 7px; color: #1f2328; cursor: pointer;
 }
 .share-dropdown button:hover { background: #f3f4f6; color: var(--accent); }
+.share-dropdown button:disabled { color: var(--muted); cursor: not-allowed; background: none; }
 .share-dropdown .share-revoke:hover { background: #fdf1f1; color: var(--danger); }
 
 /* Comment/reply author badges: every author renders as one consistent round

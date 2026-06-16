@@ -45,13 +45,31 @@ func readJSON(w http.ResponseWriter, r *http.Request, dst any) bool {
 
 // readJSONLimit is readJSON with an explicit body-size cap.
 func readJSONLimit(w http.ResponseWriter, r *http.Request, dst any, limit int64) bool {
-	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(dst); err != nil {
+	if err := decodeJSONLimit(r, dst, limit); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
 		return false
 	}
 	return true
+}
+
+// readJSONLimitOrEmpty decodes a request body like readJSONLimit, but reports an
+// empty body separately so compatibility endpoints can preserve no-body
+// behavior without duplicating decoder setup.
+func readJSONLimitOrEmpty(w http.ResponseWriter, r *http.Request, dst any, limit int64) (ok, empty bool) {
+	if err := decodeJSONLimit(r, dst, limit); err != nil {
+		if errors.Is(err, io.EOF) {
+			return false, true
+		}
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+		return false, false
+	}
+	return true, false
+}
+
+func decodeJSONLimit(r *http.Request, dst any, limit int64) error {
+	dec := json.NewDecoder(io.LimitReader(r.Body, limit))
+	dec.DisallowUnknownFields()
+	return dec.Decode(dst)
 }
 
 func writeServerError(w http.ResponseWriter, err error) {

@@ -48,7 +48,7 @@ export const api = {
   addReply: (id, cid, body) => req("POST", `/api/plans/${id}/comments/${cid}/replies`, { author: "human", body }),
   deleteReply: (id, cid, rid) => req("DELETE", `/api/plans/${id}/comments/${cid}/replies/${rid}`),
   // share links: create-or-get the plan's share id / revoke it (owner only)
-  createShare: (id) => req("POST", `/api/plans/${id}/share`),
+  createShare: (id, policy) => req("POST", `/api/plans/${id}/share`, policy),
   revokeShare: (id) => req("DELETE", `/api/plans/${id}/share`),
   // personal access tokens (authed mode; web-session only)
   listPats: () => req("GET", "/api/pats"),

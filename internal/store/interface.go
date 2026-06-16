@@ -59,6 +59,7 @@ type Store interface {
 	// nulling it; ResolveShareID maps a share id to its plan id (ErrNotFound for
 	// unknown/revoked) and is deliberately unscoped — the share id is the authz.
 	EnsureShareID(planID string) (string, error)
+	SetSharePolicy(planID string, allVersions bool, versions []int) (string, error)
 	ClearShareID(planID string) error
 	ResolveShareID(shareID string) (string, error)
 

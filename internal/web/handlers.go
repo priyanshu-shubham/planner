@@ -25,13 +25,15 @@ type planSummaryDTO struct {
 }
 
 type planMetaDTO struct {
-	ID       string `json:"id"`
-	Title    string `json:"title"`
-	Status   string `json:"status"`
-	Project  string `json:"project"`
-	Versions []int  `json:"versions"`
-	Latest   int    `json:"latest"`
-	ShareID  string `json:"share_id,omitempty"` // owner view only
+	ID               string `json:"id"`
+	Title            string `json:"title"`
+	Status           string `json:"status"`
+	Project          string `json:"project"`
+	Versions         []int  `json:"versions"`
+	Latest           int    `json:"latest"`
+	ShareID          string `json:"share_id,omitempty"` // owner view only
+	ShareAllVersions *bool  `json:"share_all_versions,omitempty"`
+	ShareVersions    []int  `json:"share_versions,omitempty"`
 }
 
 type replyDTO struct {
@@ -67,18 +69,20 @@ type fileRefDTO struct {
 }
 
 type versionViewDTO struct {
-	PlanID     string       `json:"plan_id"`
-	Title      string       `json:"title"`
-	Number     int          `json:"number"`
-	Content    string       `json:"content"`
-	Versions   []int        `json:"versions"`
-	Latest     int          `json:"latest"`
-	Role       string       `json:"role"`               // "owner" | "shared"
-	ShareID    string       `json:"share_id,omitempty"` // owner view only
-	Comments   []commentDTO `json:"comments"`
-	Carryover  []commentDTO `json:"carryover"`
-	PrevNumber int          `json:"prev_number"`
-	Files      []fileRefDTO `json:"files"` // referenced-file metadata (no content)
+	PlanID           string       `json:"plan_id"`
+	Title            string       `json:"title"`
+	Number           int          `json:"number"`
+	Content          string       `json:"content"`
+	Versions         []int        `json:"versions"`
+	Latest           int          `json:"latest"`
+	Role             string       `json:"role"`               // "owner" | "shared"
+	ShareID          string       `json:"share_id,omitempty"` // owner view only
+	ShareAllVersions *bool        `json:"share_all_versions,omitempty"`
+	ShareVersions    []int        `json:"share_versions,omitempty"`
+	Comments         []commentDTO `json:"comments"`
+	Carryover        []commentDTO `json:"carryover"`
+	PrevNumber       int          `json:"prev_number"`
+	Files            []fileRefDTO `json:"files"` // referenced-file metadata (no content)
 }
 
 // isOwn reports whether a row authored by authorID belongs to the requesting
@@ -127,6 +131,8 @@ func toCommentDTOs(planID, actor string, cs []store.Comment) []commentDTO {
 	}
 	return out
 }
+
+func boolPtr(v bool) *bool { return &v }
 
 // ---- Plan access resolution (canonical vs share ids) ----
 
@@ -238,6 +244,8 @@ func (h *handlers) apiPlanMeta(w http.ResponseWriter, r *http.Request) {
 	meta := planMetaDTO{ID: plan.ID, Title: plan.Title, Status: plan.Status, Project: plan.Project, Versions: plan.Versions, Latest: latest}
 	if role == roleOwner {
 		meta.ShareID = plan.ShareID
+		meta.ShareAllVersions = boolPtr(plan.ShareAllVersions)
+		meta.ShareVersions = plan.ShareVersions
 	}
 	writeJSON(w, http.StatusOK, meta)
 }
@@ -338,6 +346,8 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 	}
 	if role == roleOwner {
 		view.ShareID = plan.ShareID
+		view.ShareAllVersions = boolPtr(plan.ShareAllVersions)
+		view.ShareVersions = plan.ShareVersions
 	}
 	writeJSON(w, http.StatusOK, view)
 }
@@ -510,14 +520,50 @@ func (h *handlers) apiAddReply(w http.ResponseWriter, r *http.Request) {
 
 // ---- Sharing (owner only) ----
 
-// apiCreateShare mints (or returns the existing) share id for a plan. The
-// response's share id substitutes for the plan id in every read/comment URL.
+// apiCreateShare mints (or returns the existing) share id for a plan. With an
+// empty body it preserves the legacy create-or-get all-history behavior. With a
+// JSON body, it also updates the share policy to either all versions or a
+// selected version set.
 func (h *handlers) apiCreateShare(w http.ResponseWriter, r *http.Request) {
 	st, planID, ok := h.requireOwner(w, r)
 	if !ok {
 		return
 	}
-	sid, err := st.EnsureShareID(planID)
+	ensureShare := func() {
+		sid, err := st.EnsureShareID(planID)
+		if err != nil {
+			writeNotFoundOr(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"share_id": sid})
+	}
+	if r.ContentLength == 0 {
+		ensureShare()
+		return
+	}
+	var in struct {
+		AllVersions bool  `json:"all_versions"`
+		Versions    []int `json:"versions"`
+	}
+	if ok, empty := readJSONLimitOrEmpty(w, r, &in, maxBodyBytes); empty {
+		ensureShare()
+		return
+	} else if !ok {
+		return
+	}
+	if !in.AllVersions {
+		if len(in.Versions) == 0 {
+			writeJSONError(w, http.StatusBadRequest, "versions is required when all_versions is false")
+			return
+		}
+		for _, n := range in.Versions {
+			if n <= 0 {
+				writeJSONError(w, http.StatusBadRequest, "versions must be positive")
+				return
+			}
+		}
+	}
+	sid, err := st.SetSharePolicy(planID, in.AllVersions, in.Versions)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return

@@ -4,14 +4,19 @@ import "time"
 
 // Plan is a logical planning thread that owns an ordered list of versions.
 type Plan struct {
-	ID        string
-	Title     string
-	Status    string // "active" | "completed" | "stashed"
-	Project   string // absolute path the plan was created from; "No Project" if unknown
-	OwnerID   string // owning user's id; "" when the plan predates auth (owner_id IS NULL)
-	ShareID   string // capability id granting view+comment access; "" when not shared
-	CreatedAt time.Time
-	Versions  []int // ascending version numbers; filled by GetPlan only
+	ID      string
+	Title   string
+	Status  string // "active" | "completed" | "stashed"
+	Project string // absolute path the plan was created from; "No Project" if unknown
+	OwnerID string // owning user's id; "" when the plan predates auth (owner_id IS NULL)
+	ShareID string // capability id granting view+comment access; "" when not shared
+	// ShareAllVersions controls what a share link exposes. When false, only
+	// ShareVersions are visible through the share link; owners always see all
+	// versions.
+	ShareAllVersions bool
+	ShareVersions    []int
+	CreatedAt        time.Time
+	Versions         []int // ascending version numbers; filled by GetPlan only
 }
 
 const (

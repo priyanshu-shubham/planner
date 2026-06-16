@@ -374,6 +374,18 @@ button.danger:hover { background: #ffebe9; }
 .badge { font-size: 12px; padding: 1px 9px; border-radius: 999px; background: var(--bg); border: 1px solid var(--border); }
 .badge.open { color: #1a7f37; border-color: #add5b6; background: #eafaef; padding: 1px 6px; min-width: 18px; text-align: center; font-variant-numeric: tabular-nums; }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; color: var(--muted); }
+.plan-id-copy {
+  display: inline-flex; align-items: center; gap: 5px;
+  max-width: min(260px, 32vw); padding: 3px 7px;
+  border: 1px solid transparent; border-radius: 6px;
+  background: transparent; cursor: pointer;
+}
+.plan-id-copy span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.plan-id-copy svg { flex: none; opacity: .72; }
+.plan-id-copy:hover, .plan-id-copy:focus-visible {
+  color: var(--accent); border-color: var(--border); background: #fff;
+}
+.plan-id-copy.copied { color: #1a7f37; }
 
 /* ---- plan-list: completion toggle + stacked title/project ---- */
 .complete-toggle {

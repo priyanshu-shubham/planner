@@ -127,7 +127,7 @@ export function VersionPage({ planId, number, navigate }) {
             onChange={load}
           />
         )}
-        <span className="mono">{planId}</span>
+        <PlanIdCopy planId={planId} />
       </Header>
 
       <main className="page">
@@ -180,6 +180,31 @@ export function VersionPage({ planId, number, navigate }) {
         />
       )}
     </>
+  );
+}
+
+function PlanIdCopy({ planId }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyPlanId() {
+    try {
+      await navigator.clipboard.writeText(planId);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1200);
+    } catch (_) { /* clipboard unavailable; leave the id visible */ }
+  }
+
+  return (
+    <button
+      type="button"
+      className={`plan-id-copy mono${copied ? " copied" : ""}`}
+      onClick={copyPlanId}
+      title={copied ? "Copied plan id" : "Copy plan id"}
+      aria-label={copied ? `Copied plan id ${planId}` : `Copy plan id ${planId}`}
+    >
+      <span>{planId}</span>
+      {copied ? <CheckIcon /> : <CopyIcon />}
+    </button>
   );
 }
 

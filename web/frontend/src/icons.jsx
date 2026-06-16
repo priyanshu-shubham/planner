@@ -49,6 +49,20 @@ export function GitBranchIcon() {
   );
 }
 
+export function LinkIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M6.75 4.25l.72-.72a3 3 0 0 1 4.24 4.24l-1.42 1.42a3 3 0 0 1-4.24 0M9.25 11.75l-.72.72a3 3 0 0 1-4.24-4.24l1.42-1.42a3 3 0 0 1 4.24 0M6.55 9.45l2.9-2.9"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}
+
 export function ArchiveBoxIcon() {
   return (
     <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">

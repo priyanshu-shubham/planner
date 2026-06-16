@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
-import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, GitBranchIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
+import { TrashIcon, CircleIcon, CheckCircleIcon, FolderIcon, GitBranchIcon, LinkIcon, ArchiveBoxIcon, UnarchiveIcon } from "./icons.jsx";
 
 // basename returns the last path segment, used to label a plan by its project —
 // a folder's name (/home/me/planner -> planner) or a repo identity's name
@@ -157,6 +157,11 @@ export function PlanList({ navigate }) {
                     {isRepoId(p.project) ? <GitBranchIcon /> : <FolderIcon />}<span>{basename(p.project)}</span>
                   </button>
                 </div>
+                {p.shared && (
+                  <span className="shared-indicator" title="Active share link" aria-label="Active share link" role="img">
+                    <LinkIcon />
+                  </span>
+                )}
                 {p.open_comments > 0 && (
                   <span className="badge open" title={`${p.open_comments} open comment${p.open_comments === 1 ? "" : "s"}`}>
                     {p.open_comments}

@@ -3,7 +3,7 @@ import { api } from "./api.js";
 import { Header } from "./Header.jsx";
 import { MarkdownDoc } from "./MarkdownDoc.jsx";
 import { CodePreview } from "./CodePreview.jsx";
-import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, BotIcon, PersonIcon } from "./icons.jsx";
+import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, LinkIcon, BotIcon, PersonIcon } from "./icons.jsx";
 
 // The comment pane is user-resizable between these bounds (px).
 const SIDEBAR_MIN = 280;
@@ -408,15 +408,16 @@ function ShareButton({ planId, number, versions, shareId, shareAllVersions, shar
   return (
     <div className="share-menu" ref={ref}>
       <button
-        className="setup-link"
+        className={`setup-link share-trigger ${shareId ? "active" : ""}`}
         onClick={() => setOpen((o) => {
           if (!o) setCopied(false);
           return !o;
         })}
-        title="Share this plan with other users"
+        title={shareId ? "Active share link" : "Share this plan with other users"}
         aria-haspopup="menu"
         aria-expanded={open}
       >
+        {shareId && <LinkIcon />}
         Share
       </button>
       {open && (

@@ -22,6 +22,7 @@ type planSummaryDTO struct {
 	Project       string `json:"project"`
 	LatestVersion int    `json:"latest_version"`
 	OpenComments  int    `json:"open_comments"`
+	Shared        bool   `json:"shared"`
 }
 
 type planMetaDTO struct {
@@ -196,7 +197,15 @@ func (h *handlers) apiListPlans(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]planSummaryDTO, 0, len(plans))
 	for _, p := range plans {
-		out = append(out, planSummaryDTO{p.ID, p.Title, p.Status, p.Project, p.LatestVersion, p.OpenComments})
+		out = append(out, planSummaryDTO{
+			ID:            p.ID,
+			Title:         p.Title,
+			Status:        p.Status,
+			Project:       p.Project,
+			LatestVersion: p.LatestVersion,
+			OpenComments:  p.OpenComments,
+			Shared:        p.ShareID != "",
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

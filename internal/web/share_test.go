@@ -269,6 +269,81 @@ func TestShareLinkAccess(t *testing.T) {
 	}
 }
 
+func TestListPlansSharedFlag(t *testing.T) {
+	cfg := authCfg()
+	srv, st := newTestServer(t, cfg)
+	a, _ := st.UpsertUserByGoogleSub("sub-a", "a@x.com", "Alice", "")
+	at, _ := mintAccess(cfg.Auth.Secret, a.ID, accessTTL)
+
+	create := func(title string) string {
+		t.Helper()
+		resp := do(t, srv, "POST", "/api/plans", at, map[string]any{"title": title, "content": "body"})
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("create %q = %d, want 201", title, resp.StatusCode)
+		}
+		defer resp.Body.Close()
+		var out struct {
+			PlanID string `json:"plan_id"`
+		}
+		json.NewDecoder(resp.Body).Decode(&out)
+		return out.PlanID
+	}
+
+	plainID := create("Plain")
+	sharedID := create("Shared")
+
+	type summary struct {
+		ID      string `json:"id"`
+		Shared  bool   `json:"shared"`
+		ShareID string `json:"share_id"`
+	}
+	list := func() map[string]summary {
+		t.Helper()
+		resp := do(t, srv, "GET", "/api/plans", at, nil)
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("list = %d, want 200", resp.StatusCode)
+		}
+		defer resp.Body.Close()
+		var rows []summary
+		json.NewDecoder(resp.Body).Decode(&rows)
+		byID := make(map[string]summary, len(rows))
+		for _, row := range rows {
+			if row.ShareID != "" {
+				t.Fatalf("list exposed share_id for %s: %q", row.ID, row.ShareID)
+			}
+			byID[row.ID] = row
+		}
+		return byID
+	}
+
+	rows := list()
+	if rows[plainID].Shared || rows[sharedID].Shared {
+		t.Fatalf("initial shared flags = plain:%v shared:%v, want both false", rows[plainID].Shared, rows[sharedID].Shared)
+	}
+
+	resp := do(t, srv, "POST", "/api/plans/"+sharedID+"/share", at, nil)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("share = %d, want 200", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	rows = list()
+	if rows[plainID].Shared || !rows[sharedID].Shared {
+		t.Fatalf("after share flags = plain:%v shared:%v, want false/true", rows[plainID].Shared, rows[sharedID].Shared)
+	}
+
+	resp = do(t, srv, "DELETE", "/api/plans/"+sharedID+"/share", at, nil)
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("revoke = %d, want 204", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	rows = list()
+	if rows[plainID].Shared || rows[sharedID].Shared {
+		t.Fatalf("after revoke flags = plain:%v shared:%v, want both false", rows[plainID].Shared, rows[sharedID].Shared)
+	}
+}
+
 // TestShareLinkVersionPolicy covers the HTTP behavior for selected-version and
 // all-version share links: shared viewers only see allowed versions, direct
 // guesses to hidden versions 404, and old no-body share creation still exposes

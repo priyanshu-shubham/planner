@@ -309,7 +309,7 @@ func (s *sqlStore) ListPlans() ([]PlanSummary, error) {
 	}
 	versionScope := s.grantVersionFilterForPlan("v.id", "p")
 	rows, err := s.db.Query(s.rebind(`
-		SELECT p.id, p.title, p.status, p.project, p.created_at,
+		SELECT p.id, p.title, p.status, p.project, p.created_at, p.share_id,
 		       COALESCE((SELECT MAX(number) FROM versions v WHERE v.plan_id=p.id`+versionScope+`), 0),
 		       COALESCE((SELECT COUNT(*) FROM comments c
 		                 JOIN versions v ON v.id=c.version_id
@@ -323,9 +323,11 @@ func (s *sqlStore) ListPlans() ([]PlanSummary, error) {
 	var out []PlanSummary
 	for rows.Next() {
 		var s PlanSummary
-		if err := rows.Scan(&s.ID, &s.Title, &s.Status, &s.Project, &s.CreatedAt, &s.LatestVersion, &s.OpenComments); err != nil {
+		var share sql.NullString
+		if err := rows.Scan(&s.ID, &s.Title, &s.Status, &s.Project, &s.CreatedAt, &share, &s.LatestVersion, &s.OpenComments); err != nil {
 			return nil, err
 		}
+		s.ShareID = share.String
 		out = append(out, s)
 	}
 	return out, rows.Err()

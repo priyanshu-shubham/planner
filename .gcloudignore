@@ -8,7 +8,9 @@
 .git/
 .gitignore
 web/frontend/node_modules/
+internal/web/static/
 /planner
+deploy/planner.env
 *.db
 *.db-shm
 *.db-wal

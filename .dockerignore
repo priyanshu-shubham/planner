@@ -2,7 +2,9 @@
 # image (see Dockerfile), so node_modules and local artifacts are not needed.
 .git/
 web/frontend/node_modules/
+internal/web/static/
 /planner
+deploy/planner.env
 *.db
 *.db-shm
 *.db-wal

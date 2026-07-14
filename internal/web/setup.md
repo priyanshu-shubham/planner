@@ -101,7 +101,9 @@ design trade-offs; verification (tests/commands and expected results); risks and
 what's out of scope.
 
 **Plans can be HTML too** — post a `.html` file (auto-detected, or `--format html`)
-instead of markdown for a rendered or interactive mockup.
+instead of markdown. Prefer markdown; reach for HTML when the plan or illustration
+is complex (rich layout, diagrams, an interactive mockup) — build it with the
+`artifact-design` skill and post it here instead of to Claude's artifact store.
 
 **Reference files in the plan by their repo-relative path** so planner automatically
 shows their preview to the human — write `internal/web/server.go`, or

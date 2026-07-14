@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, useCallback } from "react";
 import { api } from "./api.js";
 import { Header } from "./Header.jsx";
 import { MarkdownDoc } from "./MarkdownDoc.jsx";
+import { HtmlDoc } from "./HtmlDoc.jsx";
 import { CodePreview } from "./CodePreview.jsx";
 import { CommentComposer } from "./CommentComposer.jsx";
-import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, LinkIcon, BotIcon, PersonIcon, GitCompareIcon } from "./icons.jsx";
+import { TrashIcon, CopyIcon, CheckIcon, CircleIcon, CheckCircleIcon, LinkIcon, BotIcon, PersonIcon, GitCompareIcon, FullscreenIcon } from "./icons.jsx";
 
 // The comment pane is user-resizable between these bounds (px).
 const SIDEBAR_MIN = 280;
@@ -20,9 +21,15 @@ export function VersionPage({ planId, number, navigate }) {
   const [view, setView] = useState(null);
   const [err, setErr] = useState(null);
   const [composer, setComposer] = useState(null); // {lineStart,lineEnd,quote,top,left}
+  const [fullscreen, setFullscreen] = useState(false);
+  const [barHidden, setBarHidden] = useState(false);
   const [sideW, setSideW] = useState(savedSidebarWidth);
   const docRef = useRef(null);
   const layoutRef = useRef(null);
+  const docScrollRef = useRef(null);
+  const pendingFrac = useRef(0);
+  const resyncArmed = useRef(false);
+  const lastScrollTop = useRef(0);
 
   // Drag the gutter handle to resize the comment pane (clamped, persisted).
   function startResize(e) {
@@ -63,6 +70,77 @@ export function VersionPage({ planId, number, navigate }) {
     const left = Math.min(rect.left, window.innerWidth - 380);
     setComposer({ lineStart, lineEnd, quote, top: Math.max(top, 12), left: Math.max(left, 12) });
   }, []);
+
+  // ---- Fullscreen: fills the browser tab in place. The plan render stays
+  // mounted (so commenting keeps working and the iframe keeps its scroll); only
+  // the scroll container swaps from the page to the pane. We carry the scroll
+  // position across that swap as a fraction, which survives the width/height
+  // change between the two layouts.
+  const enterFullscreen = useCallback(() => {
+    const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+    pendingFrac.current = max > 0 ? window.scrollY / max : 0;
+    resyncArmed.current = true;
+    setBarHidden(false);
+    setFullscreen(true);
+  }, []);
+
+  const exitFullscreen = useCallback(() => {
+    const el = docScrollRef.current;
+    const max = el ? Math.max(0, el.scrollHeight - el.clientHeight) : 0;
+    pendingFrac.current = max > 0 ? el.scrollTop / max : 0;
+    resyncArmed.current = false;
+    setFullscreen(false);
+  }, []);
+
+  // Apply the carried fraction to whichever scroller is now active.
+  useLayoutEffect(() => {
+    const frac = pendingFrac.current;
+    if (fullscreen) {
+      const el = docScrollRef.current;
+      if (el) {
+        el.scrollTop = frac * Math.max(0, el.scrollHeight - el.clientHeight);
+        lastScrollTop.current = el.scrollTop;
+      }
+    } else {
+      const max = Math.max(0, document.documentElement.scrollHeight - window.innerHeight);
+      window.scrollTo(0, frac * max);
+    }
+  }, [fullscreen]);
+
+  // As the HTML frame re-measures at the new width just after entering, re-apply
+  // the fraction; a timer disarms it so it never fights manual scrolling.
+  const onDocResize = useCallback(() => {
+    if (!resyncArmed.current) return;
+    const el = docScrollRef.current;
+    if (el) {
+      el.scrollTop = pendingFrac.current * Math.max(0, el.scrollHeight - el.clientHeight);
+      lastScrollTop.current = el.scrollTop;
+    }
+  }, []);
+
+  // Auto-hide the fullscreen bar on scroll-down, reveal it on scroll-up (and
+  // always at the very top). Fires only in fullscreen — the pane isn't a scroller
+  // otherwise. setBarHidden is a no-op when unchanged, so this stays cheap.
+  function onDocScroll(e) {
+    const st = e.currentTarget.scrollTop;
+    const prev = lastScrollTop.current;
+    lastScrollTop.current = st;
+    if (st <= 4) setBarHidden(false);
+    else if (st > prev + 4) setBarHidden(true);
+    else if (st < prev - 4) setBarHidden(false);
+  }
+
+  useEffect(() => {
+    if (!fullscreen) return;
+    const t = setTimeout(() => { resyncArmed.current = false; }, 1000);
+    function onKey(e) {
+      // Esc exits — unless the composer is open, which owns its own Esc (and must
+      // keep a half-typed comment).
+      if (e.key === "Escape" && !composer) exitFullscreen();
+    }
+    document.addEventListener("keydown", onKey);
+    return () => { clearTimeout(t); document.removeEventListener("keydown", onKey); };
+  }, [fullscreen, composer, exitFullscreen]);
 
   async function submitComment(body) {
     await api.addComment(planId, number, {
@@ -127,6 +205,15 @@ export function VersionPage({ planId, number, navigate }) {
           <GitCompareIcon />
           <span className="compare-label">Compare</span>
         </button>
+        <button
+          className="icon-btn fs-trigger labeled"
+          title="Full screen view"
+          aria-label="Full screen view"
+          onClick={enterFullscreen}
+        >
+          <FullscreenIcon />
+          <span className="fs-label">Full screen</span>
+        </button>
         <span className="spacer" />
         {!shared && (
           <ShareButton
@@ -148,8 +235,39 @@ export function VersionPage({ planId, number, navigate }) {
         )}
 
         <div className="layout" ref={layoutRef} style={{ gridTemplateColumns: `minmax(0, 1fr) ${sideW}px` }}>
-          <MarkdownDoc content={view.content} docRef={docRef} onSelect={onSelect} files={view.files} />
-          <CodePreview docRef={docRef} />
+          <div className={`doc-pane ${view.format === "html" ? "is-html" : "is-md"}${fullscreen ? " fullscreen" : ""}`}>
+            {fullscreen && (
+              <div className={`fullscreen-bar${barHidden ? " hidden" : ""}`}>
+                <span className="fullscreen-title">{view.title} · v{view.number}</span>
+                <span className="spacer" />
+                <button
+                  className="setup-link"
+                  onClick={exitFullscreen}
+                  title="Exit full screen (Esc)"
+                  aria-label="Exit full screen"
+                >
+                  Exit full screen
+                </button>
+              </div>
+            )}
+            <div className="doc-scroll" ref={docScrollRef} onScroll={onDocScroll}>
+              {view.format === "html" ? (
+                <HtmlDoc content={view.content} onSelect={onSelect} onResize={onDocResize} />
+              ) : (
+                <>
+                  <MarkdownDoc content={view.content} docRef={docRef} onSelect={onSelect} files={view.files} />
+                  <CodePreview docRef={docRef} />
+                </>
+              )}
+            </div>
+            {composer && (
+              <CommentComposer
+                composer={composer}
+                onCancel={() => { setComposer(null); window.getSelection()?.removeAllRanges(); }}
+                onSubmit={submitComment}
+              />
+            )}
+          </div>
 
           <div className="side-wrap">
             <div
@@ -183,14 +301,6 @@ export function VersionPage({ planId, number, navigate }) {
           </div>
         </div>
       </main>
-
-      {composer && (
-        <CommentComposer
-          composer={composer}
-          onCancel={() => { setComposer(null); window.getSelection()?.removeAllRanges(); }}
-          onSubmit={submitComment}
-        />
-      )}
     </>
   );
 }
@@ -229,7 +339,9 @@ function PlanIdCopy({ planId }) {
 }
 
 function locLabel(c) {
-  if (c.whole_file) return "whole file";
+  // An HTML plan's comment is anchored to a quoted selection, not a line range,
+  // so it arrives whole_file-flagged but carries a quote — label it as such.
+  if (c.whole_file) return c.quote ? "quote" : "whole file";
   if (c.line_start === c.line_end) return `line ${c.line_start}`;
   return `lines ${c.line_start}–${c.line_end}`;
 }
@@ -334,12 +446,16 @@ function ReplyForm({ planId, commentId, onChange }) {
     setOpen(false);
     onChange();
   }
+  // Modified Enter (Shift/Ctrl/Cmd) sends; plain Enter still inserts a newline.
+  function onKeyDown(e) {
+    if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) send(e);
+  }
   if (!open) {
     return <button className="reply-toggle subtle" onClick={() => setOpen(true)}>Reply</button>;
   }
   return (
     <form className="reply-form" onSubmit={send}>
-      <textarea value={body} onChange={(e) => setBody(e.target.value)} placeholder="Reply…" rows={2} autoFocus />
+      <textarea value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onKeyDown} placeholder="Reply…" rows={2} autoFocus />
       <div className="reply-row">
         <button type="button" className="subtle" onClick={() => { setOpen(false); setBody(""); }}>Cancel</button>
         <button type="submit" className="primary" disabled={!body.trim()}>Send</button>

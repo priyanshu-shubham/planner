@@ -181,3 +181,19 @@ export function PersonIcon() {
     </svg>
   );
 }
+
+// FullscreenIcon — four outward corner brackets, the standard "expand to full
+// screen" glyph.
+export function FullscreenIcon() {
+  return (
+    <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <path
+        d="M2.5 6V3.5c0-.55.45-1 1-1H6M10 2.5h2.5c.55 0 1 .45 1 1V6M13.5 10v2.5c0 .55-.45 1-1 1H10M6 13.5H3.5c-.55 0-1-.45-1-1V10"
+        stroke="currentColor"
+        strokeWidth="1.2"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
+}

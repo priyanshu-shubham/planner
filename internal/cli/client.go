@@ -55,6 +55,7 @@ type apiVersionView struct {
 	Title    string       `json:"title"`
 	Number   int          `json:"number"`
 	Content  string       `json:"content"`
+	Format   string       `json:"format"`
 	Versions []int        `json:"versions"`
 	Latest   int          `json:"latest"`
 	Comments []apiComment `json:"comments"`
@@ -130,26 +131,28 @@ func isConnErr(err error) bool {
 type createPlanReq struct {
 	Title   string               `json:"title"`
 	Content string               `json:"content"`
+	Format  string               `json:"format"`
 	Project string               `json:"project"`
 	Files   []store.FileSnapshot `json:"files"`
 }
 
 type addVersionReq struct {
 	Content string               `json:"content"`
+	Format  string               `json:"format"`
 	Files   []store.FileSnapshot `json:"files"`
 }
 
-func (c *client) createPlan(title, content, project string, files []store.FileSnapshot) (apiCreated, error) {
+func (c *client) createPlan(title, content, format, project string, files []store.FileSnapshot) (apiCreated, error) {
 	var out apiCreated
 	err := c.do(http.MethodPost, "/api/plans",
-		createPlanReq{Title: title, Content: content, Project: project, Files: files}, &out)
+		createPlanReq{Title: title, Content: content, Format: format, Project: project, Files: files}, &out)
 	return out, err
 }
 
-func (c *client) addVersion(planID, content string, files []store.FileSnapshot) (apiCreated, error) {
+func (c *client) addVersion(planID, content, format string, files []store.FileSnapshot) (apiCreated, error) {
 	var out apiCreated
 	err := c.do(http.MethodPost, "/api/plans/"+planID+"/versions",
-		addVersionReq{Content: content, Files: files}, &out)
+		addVersionReq{Content: content, Format: format, Files: files}, &out)
 	return out, err
 }
 

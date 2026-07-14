@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS versions (
   plan_id    TEXT NOT NULL REFERENCES plans(id),
   number     INTEGER NOT NULL,
   content    TEXT NOT NULL,
+  format     TEXT NOT NULL DEFAULT 'markdown',
   created_at TIMESTAMP NOT NULL,
   UNIQUE(plan_id, number)
 );
@@ -198,6 +199,9 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	if err := addColumn(db, "comments", "author_id", `TEXT`); err != nil {
+		return err
+	}
+	if err := addColumn(db, "versions", "format", `TEXT NOT NULL DEFAULT 'markdown'`); err != nil {
 		return err
 	}
 	if err := addColumn(db, "replies", "author_id", `TEXT`); err != nil {

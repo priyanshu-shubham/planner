@@ -21,12 +21,12 @@ func TestShareIDLifecycle(t *testing.T) {
 			as := root.WithOwner(alice.ID)
 			bs := root.WithOwner(bob.ID)
 
-			p, _, err := as.CreatePlan("P", "l1", "/w", nil)
+			p, _, err := as.CreatePlan("P", "l1", "", "/w", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
 			// Two unshared plans coexist (NULL share_id must not collide).
-			if _, _, err := as.CreatePlan("Q", "l1", "/w", nil); err != nil {
+			if _, _, err := as.CreatePlan("Q", "l1", "", "/w", nil); err != nil {
 				t.Fatalf("second unshared plan: %v", err)
 			}
 
@@ -90,11 +90,11 @@ func TestPlanGrantScope(t *testing.T) {
 			bob := mkUser(t, root, "bob")
 			as := root.WithOwner(alice.ID)
 
-			pA, vA, err := as.CreatePlan("A", "l1\nl2", "/w", nil)
+			pA, vA, err := as.CreatePlan("A", "l1\nl2", "", "/w", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			pB, vB, err := as.CreatePlan("B", "l1", "/w", nil)
+			pB, vB, err := as.CreatePlan("B", "l1", "", "/w", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -204,15 +204,15 @@ func TestShareVersionPolicy(t *testing.T) {
 			bob := mkUser(t, root, "bob")
 			as := root.WithOwner(alice.ID)
 
-			p, v1, err := as.CreatePlan("A", "v1", "/w", []FileSnapshot{{Path: "a.go", Content: "package a\n"}})
+			p, v1, err := as.CreatePlan("A", "v1", "", "/w", []FileSnapshot{{Path: "a.go", Content: "package a\n"}})
 			if err != nil {
 				t.Fatal(err)
 			}
-			v2, err := as.AddVersion(p.ID, "v2", nil)
+			v2, err := as.AddVersion(p.ID, "v2", "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, err := as.AddVersion(p.ID, "v3", nil); err != nil {
+			if _, err := as.AddVersion(p.ID, "v3", "", nil); err != nil {
 				t.Fatal(err)
 			}
 
@@ -300,7 +300,7 @@ func TestCarryCommentAttribution(t *testing.T) {
 
 			alice := mkUser(t, root, "alice")
 			as := root.WithOwner(alice.ID)
-			p, v1, err := as.CreatePlan("P", "l1", "/w", nil)
+			p, v1, err := as.CreatePlan("P", "l1", "", "/w", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -311,7 +311,7 @@ func TestCarryCommentAttribution(t *testing.T) {
 			if _, err := as.AddReply(c.ID, AuthorAgent, "ack", alice.ID); err != nil {
 				t.Fatal(err)
 			}
-			v2, err := as.AddVersion(p.ID, "l1 v2", nil)
+			v2, err := as.AddVersion(p.ID, "l1 v2", "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -344,7 +344,7 @@ func TestSQLiteChildIDMigration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, v1, err := s.CreatePlan("Old", "l1", "/w", nil)
+	p, v1, err := s.CreatePlan("Old", "l1", "", "/w", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -178,7 +178,7 @@ func TestTwoUserIsolation(t *testing.T) {
 
 			// Alice builds a plan with a version, a comment, a reply, and a file.
 			file := FileSnapshot{Path: "a.go", Language: "go", Content: "package a\n"}
-			p, v1, err := as.CreatePlan("Alice plan", "l1\nl2", "/work", []FileSnapshot{file})
+			p, v1, err := as.CreatePlan("Alice plan", "l1\nl2", "", "/work", []FileSnapshot{file})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -208,7 +208,7 @@ func TestTwoUserIsolation(t *testing.T) {
 			}
 
 			// Bob can't mutate it either.
-			if _, err := bs.AddVersion(p.ID, "sneaky", nil); !errors.Is(err, ErrNotFound) {
+			if _, err := bs.AddVersion(p.ID, "sneaky", "", nil); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob AddVersion = %v, want ErrNotFound", err)
 			}
 			if _, err := bs.AddComment(p.ID, v1.ID, 1, 1, "", "sneaky", bob.ID); !errors.Is(err, ErrNotFound) {
@@ -264,7 +264,7 @@ func TestNullOwnerInvisibleUnderScope(t *testing.T) {
 			defer root.Close()
 
 			// A pre-auth plan: created by the unscoped store, owner_id stays NULL.
-			p, v1, err := root.CreatePlan("Legacy", "body", "/legacy", nil)
+			p, v1, err := root.CreatePlan("Legacy", "body", "", "/legacy", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -286,7 +286,7 @@ func TestNullOwnerInvisibleUnderScope(t *testing.T) {
 
 			// Unscoped still sees everything, including a second user's plan.
 			bob := mkUser(t, root, "bob")
-			bp, _, err := root.WithOwner(bob.ID).CreatePlan("Bob plan", "x", "/b", nil)
+			bp, _, err := root.WithOwner(bob.ID).CreatePlan("Bob plan", "x", "", "/b", nil)
 			if err != nil {
 				t.Fatal(err)
 			}

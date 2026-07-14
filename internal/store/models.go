@@ -32,13 +32,31 @@ func ValidPlanStatus(s string) bool {
 	return s == PlanActive || s == PlanCompleted || s == PlanStashed
 }
 
-// Version is an immutable snapshot of a plan's markdown content.
+// Version is an immutable snapshot of a plan's content. Format says how Content
+// is authored and rendered: "markdown" (the default) or "html".
 type Version struct {
 	ID        string
 	PlanID    string
 	Number    int
 	Content   string
+	Format    string // "markdown" | "html"; see NormalizeFormat
 	CreatedAt time.Time
+}
+
+const (
+	FormatMarkdown = "markdown"
+	FormatHTML     = "html"
+)
+
+// NormalizeFormat maps a client-supplied (or legacy empty) format string to a
+// known value: "html" stays "html"; everything else — the empty string on old
+// rows and pre-format callers, or any unrecognized value — collapses to
+// "markdown". Storing a normalized value means readers never see a blank format.
+func NormalizeFormat(f string) string {
+	if f == FormatHTML {
+		return FormatHTML
+	}
+	return FormatMarkdown
 }
 
 // FileSnapshot is a whole referenced file captured by the CLI at post time and

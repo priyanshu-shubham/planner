@@ -21,11 +21,11 @@ var ErrNotFound = errors.New("not found")
 type Store interface {
 	// Plans / versions.
 	ListPlans() ([]PlanSummary, error)
-	CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error)
+	CreatePlan(title, content, format, project string, files []FileSnapshot) (Plan, Version, error)
 	GetPlan(planID string) (Plan, error) // Plan.Versions filled, ascending
 	SetPlanStatus(planID, status string) error
 	SetPlanProject(planID, project string) error
-	AddVersion(planID, content string, files []FileSnapshot) (Version, error)
+	AddVersion(planID, content, format string, files []FileSnapshot) (Version, error)
 	GetVersion(planID string, number int) (Version, error)
 
 	// Referenced-file snapshots (content-addressed). The store hashes each

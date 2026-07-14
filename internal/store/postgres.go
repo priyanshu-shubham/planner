@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS versions (
   plan_id    TEXT NOT NULL REFERENCES plans(id),
   number     INTEGER NOT NULL,
   content    TEXT NOT NULL,
+  format     TEXT NOT NULL DEFAULT 'markdown',
   created_at TIMESTAMPTZ NOT NULL,
   UNIQUE(plan_id, number)
 );
@@ -156,6 +157,9 @@ func migratePostgres(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`ALTER TABLE plans ADD COLUMN IF NOT EXISTS share_scope TEXT NOT NULL DEFAULT 'all'`); err != nil {
 		return fmt.Errorf("add plans.share_scope: %w", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE versions ADD COLUMN IF NOT EXISTS format TEXT NOT NULL DEFAULT 'markdown'`); err != nil {
+		return fmt.Errorf("add versions.format: %w", err)
 	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_plans_owner ON plans(owner_id)`); err != nil {
 		return fmt.Errorf("create idx_plans_owner: %w", err)

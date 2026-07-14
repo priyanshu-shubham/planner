@@ -74,6 +74,7 @@ type versionViewDTO struct {
 	Title            string       `json:"title"`
 	Number           int          `json:"number"`
 	Content          string       `json:"content"`
+	Format           string       `json:"format"`
 	Versions         []int        `json:"versions"`
 	Latest           int          `json:"latest"`
 	Role             string       `json:"role"`               // "owner" | "shared"
@@ -214,6 +215,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 	var in struct {
 		Title   string               `json:"title"`
 		Content string               `json:"content"`
+		Format  string               `json:"format"`
 		Project string               `json:"project"`
 		Files   []store.FileSnapshot `json:"files"`
 	}
@@ -227,7 +229,7 @@ func (h *handlers) apiCreatePlan(w http.ResponseWriter, r *http.Request) {
 	if in.Project == "" {
 		in.Project = store.NoProject
 	}
-	p, v, err := h.store(r).CreatePlan(in.Title, in.Content, in.Project, in.Files)
+	p, v, err := h.store(r).CreatePlan(in.Title, in.Content, in.Format, in.Project, in.Files)
 	if err != nil {
 		writeServerError(w, err)
 		return
@@ -266,12 +268,13 @@ func (h *handlers) apiAddVersion(w http.ResponseWriter, r *http.Request) {
 	}
 	var in struct {
 		Content string               `json:"content"`
+		Format  string               `json:"format"`
 		Files   []store.FileSnapshot `json:"files"`
 	}
 	if !readJSONLimit(w, r, &in, maxPlanPostBytes) {
 		return
 	}
-	v, err := st.AddVersion(id, in.Content, in.Files)
+	v, err := st.AddVersion(id, in.Content, in.Format, in.Files)
 	if err != nil {
 		writeNotFoundOr(w, err)
 		return
@@ -345,6 +348,7 @@ func (h *handlers) apiVersionView(w http.ResponseWriter, r *http.Request) {
 		Title:      plan.Title,
 		Number:     version.Number,
 		Content:    version.Content,
+		Format:     version.Format,
 		Versions:   plan.Versions,
 		Latest:     latest,
 		Role:       role,

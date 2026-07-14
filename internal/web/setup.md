@@ -100,6 +100,9 @@ ordered task checklist (`- [ ] …`) small enough to verify each step; key files
 design trade-offs; verification (tests/commands and expected results); risks and
 what's out of scope.
 
+**Plans can be HTML too** — post a `.html` file (auto-detected, or `--format html`)
+instead of markdown for a rendered or interactive mockup.
+
 **Reference files in the plan by their repo-relative path** so planner automatically
 shows their preview to the human — write `internal/web/server.go`, or
 with a line range `internal/web/server.go:120-140`, rather than an absolute path or

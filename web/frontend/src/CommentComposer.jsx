@@ -40,6 +40,15 @@ export function CommentComposer({ composer, onCancel, onSubmit }) {
     if (body.trim()) onSubmit(body.trim());
   }
 
+  // A modified Enter (Shift/Ctrl/Cmd) submits, so the comment can be posted
+  // without reaching for the mouse; a plain Enter still inserts a newline.
+  function onKeyDown(e) {
+    if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      if (body.trim()) onSubmit(body.trim());
+    }
+  }
+
   const target = composer.targetLabel || (composer.quote ? "on" : "on the whole file");
   return (
     <form ref={formRef} className="composer" style={{ top: composer.top, left: composer.left }} onSubmit={submit}>
@@ -60,7 +69,7 @@ export function CommentComposer({ composer, onCancel, onSubmit }) {
           </>
         )}
       </div>
-      <textarea ref={ref} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Leave a comment for the agent…" />
+      <textarea ref={ref} value={body} onChange={(e) => setBody(e.target.value)} onKeyDown={onKeyDown} placeholder="Leave a comment for the agent…" />
       <div className="composer-row">
         <button type="button" className="subtle" onClick={onCancel}>Cancel</button>
         <button type="submit" className="primary" disabled={!body.trim()}>Add comment</button>

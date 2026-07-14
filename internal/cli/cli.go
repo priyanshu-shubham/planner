@@ -25,8 +25,8 @@ const usage = `planner — AI/human plan review loop
 Usage:
   planner serve    [--port 8080] [--backend sqlite|postgres] [--db PATH_OR_DSN] [--auth]
   planner setup    --server URL [--name NAME] [--no-browser]
-  planner create   --title TITLE [--file plan.md]      (reads stdin if no --file)
-  planner update   PLAN_ID [--file plan.md]            (reads stdin if no --file)
+  planner create   --title TITLE [--file plan.md] [--format markdown|html]  (reads stdin if no --file)
+  planner update   PLAN_ID [--file plan.md] [--format markdown|html]        (reads stdin if no --file)
   planner show     PLAN_ID [--version N] [--json]
   planner comments PLAN_ID [--version N] [--status open|all] [--json]
   planner reply    PLAN_ID COMMENT_ID [-m MESSAGE]     (reads stdin if no -m)
@@ -236,7 +236,37 @@ func isAllDigits(s string) bool {
 	return true
 }
 
-// readContent returns the markdown body from --file or stdin.
+// resolveFormat picks the plan content format. An explicit --format wins (and is
+// validated); otherwise an .html/.htm file is treated as HTML and everything
+// else — including content piped on stdin — as markdown.
+func resolveFormat(flagVal, file string) (string, error) {
+	if flagVal != "" {
+		switch flagVal {
+		case store.FormatMarkdown, store.FormatHTML:
+			return flagVal, nil
+		default:
+			return "", fmt.Errorf("--format must be %q or %q", store.FormatMarkdown, store.FormatHTML)
+		}
+	}
+	switch strings.ToLower(filepath.Ext(file)) {
+	case ".html", ".htm":
+		return store.FormatHTML, nil
+	}
+	return store.FormatMarkdown, nil
+}
+
+// snapshotFor captures referenced-file snapshots for markdown plans, whose
+// `file:line` tokens the UI decorates into previews. HTML plans get none:
+// scanning HTML for path-like tokens would falsely snapshot linked assets
+// (href/src), and the iframe view does not decorate references.
+func snapshotFor(format, content string) []store.FileSnapshot {
+	if format == store.FormatHTML {
+		return nil
+	}
+	return snapshotFiles(workingDir(), content)
+}
+
+// readContent returns the plan body from --file or stdin.
 func readContent(file string) (string, error) {
 	if file != "" {
 		b, err := os.ReadFile(file)
@@ -422,7 +452,8 @@ func envOr(key, def string) string {
 func cmdCreate(args []string) error {
 	fs := flag.NewFlagSet("create", flag.ContinueOnError)
 	title := fs.String("title", "", "plan title (required)")
-	file := fs.String("file", "", "markdown file (default: stdin)")
+	file := fs.String("file", "", "plan file (default: stdin)")
+	format := fs.String("format", "", "content format: markdown|html (default: markdown, or html for a .html file)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -433,13 +464,17 @@ func cmdCreate(args []string) error {
 	if err != nil {
 		return err
 	}
+	fmtVal, err := resolveFormat(*format, *file)
+	if err != nil {
+		return err
+	}
 	cl, err := resolveClient()
 	if err != nil {
 		return err
 	}
 	project := resolveProject()
-	files := snapshotFiles(workingDir(), content)
-	created, err := cl.createPlan(*title, content, project, files)
+	files := snapshotFor(fmtVal, content)
+	created, err := cl.createPlan(*title, content, fmtVal, project, files)
 	if err != nil {
 		return err
 	}
@@ -449,15 +484,20 @@ func cmdCreate(args []string) error {
 
 func cmdUpdate(args []string) error {
 	fs := flag.NewFlagSet("update", flag.ContinueOnError)
-	file := fs.String("file", "", "markdown file (default: stdin)")
+	file := fs.String("file", "", "plan file (default: stdin)")
+	format := fs.String("format", "", "content format: markdown|html (default: markdown, or html for a .html file)")
 	planID, rest := takePositional(args)
 	if err := fs.Parse(rest); err != nil {
 		return err
 	}
 	if planID == "" {
-		return fmt.Errorf("usage: planner update PLAN_ID [--file plan.md]")
+		return fmt.Errorf("usage: planner update PLAN_ID [--file plan.md] [--format markdown|html]")
 	}
 	content, err := readContent(*file)
+	if err != nil {
+		return err
+	}
+	fmtVal, err := resolveFormat(*format, *file)
 	if err != nil {
 		return err
 	}
@@ -465,8 +505,8 @@ func cmdUpdate(args []string) error {
 	if err != nil {
 		return err
 	}
-	files := snapshotFiles(workingDir(), content)
-	created, err := cl.addVersion(planID, content, files)
+	files := snapshotFor(fmtVal, content)
+	created, err := cl.addVersion(planID, content, fmtVal, files)
 	if err != nil {
 		return err
 	}
@@ -594,6 +634,11 @@ func cmdReply(args []string) error {
 
 func commentLoc(c apiComment) string {
 	if c.WholeFile {
+		// HTML plans anchor by quoted text rather than a line range, so a
+		// quote-bearing whole-file comment is really "on this quote".
+		if c.Quote != "" {
+			return "quote"
+		}
 		return "whole file"
 	}
 	if c.LineStart == c.LineEnd {

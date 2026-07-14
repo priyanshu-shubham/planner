@@ -62,7 +62,7 @@ func TestRoundTrip(t *testing.T) {
 			s := open(t)
 			defer s.Close()
 
-			p, v1, err := s.CreatePlan("Demo", "line1\nline2\nline3", "/work/demo", nil)
+			p, v1, err := s.CreatePlan("Demo", "line1\nline2\nline3", "", "/work/demo", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -89,7 +89,7 @@ func TestRoundTrip(t *testing.T) {
 			}
 
 			// post v2
-			v2, err := s.AddVersion(p.ID, "line1 better\nline4", nil)
+			v2, err := s.AddVersion(p.ID, "line1 better\nline4", "", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -189,7 +189,7 @@ func TestPlanStatusAndProject(t *testing.T) {
 			s := open(t)
 			defer s.Close()
 
-			p, _, err := s.CreatePlan("Proj", "body", "/home/me/repo", nil)
+			p, _, err := s.CreatePlan("Proj", "body", "", "/home/me/repo", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -250,7 +250,7 @@ func TestFileSnapshots(t *testing.T) {
 
 			// (a) round-trip: a snapshot's content is retrievable via GetBlob for the
 			// sha returned by GetVersionFileList.
-			p, v1, err := s.CreatePlan("Files", "see main.go", "/work", []FileSnapshot{shared, only})
+			p, v1, err := s.CreatePlan("Files", "see main.go", "", "/work", []FileSnapshot{shared, only})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -278,7 +278,7 @@ func TestFileSnapshots(t *testing.T) {
 
 			// (b) dedup: the same content under a second version yields one blob but
 			// two list entries, both resolvable to the same sha.
-			v2, err := s.AddVersion(p.ID, "still see go.mod", []FileSnapshot{shared})
+			v2, err := s.AddVersion(p.ID, "still see go.mod", "", []FileSnapshot{shared})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -295,7 +295,7 @@ func TestFileSnapshots(t *testing.T) {
 			// now-unreferenced main.go blob and plan 1's list entries.
 			mainSHA := byPath["main.go"].SHA
 			sharedSHA := byPath["go.mod"].SHA
-			p2, p2v1, err := s.CreatePlan("Files2", "see go.mod", "/work", []FileSnapshot{shared})
+			p2, p2v1, err := s.CreatePlan("Files2", "see go.mod", "", "/work", []FileSnapshot{shared})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -340,7 +340,7 @@ func TestScopedDeleteAndComment(t *testing.T) {
 			scoped := s.WithOwner("user-1")
 
 			// Create a plan owned by user-1.
-			p, v, err := scoped.CreatePlan("Scoped", "body", "/work", nil)
+			p, v, err := scoped.CreatePlan("Scoped", "body", "", "/work", nil)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -371,6 +371,48 @@ func TestScopedDeleteAndComment(t *testing.T) {
 			// Verify it's gone.
 			if _, err := scoped.GetPlan(p.ID); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("GetPlan after delete: want ErrNotFound, got %v", err)
+			}
+		})
+	}
+}
+
+// TestVersionFormat covers the per-version content format across both backends:
+// an explicit "html" round-trips, an empty/unknown format normalizes to
+// "markdown" on write, and a plan's versions can mix formats.
+func TestVersionFormat(t *testing.T) {
+	for name, open := range backends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			defer s.Close()
+
+			// v1: explicit html.
+			p, v1, err := s.CreatePlan("Fmt", "<h1>hi</h1>", FormatHTML, "/work", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v1.Format != FormatHTML {
+				t.Fatalf("CreatePlan format: want %q, got %q", FormatHTML, v1.Format)
+			}
+			if got, _ := s.GetVersion(p.ID, 1); got.Format != FormatHTML {
+				t.Fatalf("GetVersion v1 format: want %q, got %q", FormatHTML, got.Format)
+			}
+
+			// v2: empty format normalizes to markdown (mixed-format plan).
+			v2, err := s.AddVersion(p.ID, "# hi", "", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if v2.Format != FormatMarkdown {
+				t.Fatalf("AddVersion empty format: want %q, got %q", FormatMarkdown, v2.Format)
+			}
+
+			// v3: an unrecognized value also collapses to markdown.
+			v3, err := s.AddVersion(p.ID, "plain", "rtf", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got, _ := s.GetVersion(p.ID, v3.Number); got.Format != FormatMarkdown {
+				t.Fatalf("GetVersion v3 format: want %q, got %q", FormatMarkdown, got.Format)
 			}
 		})
 	}

@@ -91,6 +91,11 @@ header.topbar .spacer { flex: 1; }
   background: #ddf4ff;
 }
 .compare-trigger:disabled:hover { background: #fff; }
+/* Full-screen trigger: same pill-with-optional-label treatment as Compare. */
+.fs-trigger { width: 28px; height: 28px; border-radius: 999px; }
+.fs-trigger .fs-label { display: none; }
+.fs-trigger.labeled { width: auto; padding: 0 9px; gap: 5px; }
+.fs-trigger.labeled .fs-label { display: inline; font-size: 12px; }
 .compare-status {
   display: inline-flex;
   align-items: center;
@@ -378,6 +383,13 @@ header.topbar .spacer { flex: 1; }
   .compare-trigger.labeled .compare-label {
     display: none;
   }
+  .fs-trigger.labeled {
+    width: 28px;
+    padding: 0;
+  }
+  .fs-trigger.labeled .fs-label {
+    display: none;
+  }
 }
 
 /* Sidebar resize: the wrapper stretches to the full column so the absolutely
@@ -432,6 +444,58 @@ article.doc.markdown-body pre.mermaid {
   padding: 8px 0;
 }
 pre.mermaid svg { max-width: 100%; height: auto; }
+
+/* ---- HTML plans (sandboxed iframe) ---- */
+/* The mockup provides its own layout, so drop the doc padding and clip the frame
+   to the card's rounded corners. Height is set inline from the frame's reported
+   content height (see HtmlDoc). */
+article.doc.html-doc {
+  padding: 0;
+  overflow: hidden;
+  cursor: default;
+}
+.html-frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  background: #fff;
+}
+
+/* ---- fullscreen plan view (fills the browser tab, in place) ---- */
+/* The doc pane is normally the left grid column; .fullscreen lifts it out to
+   cover the whole tab. The plan render stays mounted — commenting keeps working
+   and the frame keeps its scroll — only the container and its scroller change. */
+.doc-pane { min-width: 0; }
+.doc-pane.fullscreen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+}
+.fullscreen-bar {
+  flex: 0 0 auto;
+  height: 42px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border-soft);
+  background: #fbfcfd;
+  transition: margin-top 0.2s ease;
+}
+/* Slide the bar up out of flow on scroll-down; the doc-scroll grows to fill. */
+.fullscreen-bar.hidden { margin-top: -42px; }
+.fullscreen-title { font-weight: 600; font-size: 14px; }
+.fullscreen-bar .spacer { flex: 1; }
+.doc-pane.fullscreen .doc-scroll { flex: 1 1 auto; min-height: 0; overflow: auto; }
+/* Markdown reads as a centered column with breathing room; HTML fills the width
+   edge-to-edge, dropping the card chrome for a clean bleed. */
+.doc-pane.fullscreen.is-md .doc-scroll { padding: 20px 24px; }
+.doc-pane.fullscreen.is-md .doc-scroll .markdown-body { max-width: 1000px; margin: 0 auto; }
+.doc-pane.fullscreen.is-html .doc-scroll .html-doc { border: 0; border-radius: 0; }
 
 /* ---- inline code references (file:line tokens) + hover preview ---- */
 .code-ref {

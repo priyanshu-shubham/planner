@@ -105,7 +105,7 @@ func now() time.Time { return time.Now().UTC() }
 
 // CreatePlan inserts a new plan and its first version, returning both. Any
 // referenced-file snapshots are stored content-addressed alongside the version.
-func (s *sqlStore) CreatePlan(title, content, project string, files []FileSnapshot) (Plan, Version, error) {
+func (s *sqlStore) CreatePlan(title, content, format, project string, files []FileSnapshot) (Plan, Version, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Plan{}, Version{}, err
@@ -117,9 +117,9 @@ func (s *sqlStore) CreatePlan(title, content, project string, files []FileSnapsh
 		p.ID, p.Title, p.Status, p.Project, s.ownerArg(), p.CreatedAt); err != nil {
 		return Plan{}, Version{}, err
 	}
-	v := Version{ID: id.New("v"), PlanID: p.ID, Number: 1, Content: content, CreatedAt: now()}
-	if _, err := tx.Exec(s.rebind(`INSERT INTO versions(id,plan_id,number,content,created_at) VALUES(?,?,?,?,?)`),
-		v.ID, v.PlanID, v.Number, v.Content, v.CreatedAt); err != nil {
+	v := Version{ID: id.New("v"), PlanID: p.ID, Number: 1, Content: content, Format: NormalizeFormat(format), CreatedAt: now()}
+	if _, err := tx.Exec(s.rebind(`INSERT INTO versions(id,plan_id,number,content,format,created_at) VALUES(?,?,?,?,?,?)`),
+		v.ID, v.PlanID, v.Number, v.Content, v.Format, v.CreatedAt); err != nil {
 		return Plan{}, Version{}, err
 	}
 	if err := s.insertFiles(tx, v.ID, files); err != nil {
@@ -149,7 +149,7 @@ func (s *sqlStore) insertFiles(tx *sql.Tx, versionID string, files []FileSnapsho
 
 // AddVersion appends a new immutable version to an existing plan, storing any
 // referenced-file snapshots content-addressed alongside it.
-func (s *sqlStore) AddVersion(planID, content string, files []FileSnapshot) (Version, error) {
+func (s *sqlStore) AddVersion(planID, content, format string, files []FileSnapshot) (Version, error) {
 	tx, err := s.db.Begin()
 	if err != nil {
 		return Version{}, err
@@ -169,9 +169,9 @@ func (s *sqlStore) AddVersion(planID, content string, files []FileSnapshot) (Ver
 	if err := tx.QueryRow(s.rebind(`SELECT COALESCE(MAX(number),0)+1 FROM versions WHERE plan_id=?`), planID).Scan(&next); err != nil {
 		return Version{}, err
 	}
-	v := Version{ID: id.New("v"), PlanID: planID, Number: next, Content: content, CreatedAt: now()}
-	if _, err := tx.Exec(s.rebind(`INSERT INTO versions(id,plan_id,number,content,created_at) VALUES(?,?,?,?,?)`),
-		v.ID, v.PlanID, v.Number, v.Content, v.CreatedAt); err != nil {
+	v := Version{ID: id.New("v"), PlanID: planID, Number: next, Content: content, Format: NormalizeFormat(format), CreatedAt: now()}
+	if _, err := tx.Exec(s.rebind(`INSERT INTO versions(id,plan_id,number,content,format,created_at) VALUES(?,?,?,?,?,?)`),
+		v.ID, v.PlanID, v.Number, v.Content, v.Format, v.CreatedAt); err != nil {
 		return Version{}, err
 	}
 	if err := s.insertFiles(tx, v.ID, files); err != nil {
@@ -285,10 +285,11 @@ func scanInts(rows *sql.Rows) ([]int, error) {
 
 func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 	var v Version
-	err := row.Scan(&v.ID, &v.PlanID, &v.Number, &v.Content, &v.CreatedAt)
+	err := row.Scan(&v.ID, &v.PlanID, &v.Number, &v.Content, &v.Format, &v.CreatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Version{}, ErrNotFound
 	}
+	v.Format = NormalizeFormat(v.Format)
 	return v, err
 }
 
@@ -296,7 +297,7 @@ func scanVersion(row interface{ Scan(...any) error }) (Version, error) {
 func (s *sqlStore) GetVersion(planID string, number int) (Version, error) {
 	pred, args := s.accessibleVersionPred("versions.id")
 	return scanVersion(s.db.QueryRow(
-		s.rebind(`SELECT id,plan_id,number,content,created_at FROM versions WHERE plan_id=? AND number=?`+pred),
+		s.rebind(`SELECT id,plan_id,number,content,format,created_at FROM versions WHERE plan_id=? AND number=?`+pred),
 		append([]any{planID, number}, args...)...))
 }
 

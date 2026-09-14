@@ -30,6 +30,7 @@ Usage:
   planner show     PLAN_ID [--version N] [--json]
   planner comments PLAN_ID [--version N] [--status open|all] [--json]
   planner reply    PLAN_ID COMMENT_ID [-m MESSAGE]     (reads stdin if no -m)
+  planner version
 
 Client commands talk to the server configured by 'planner setup', which resolves
 as $PLANNER_SERVER > ~/.planner/config.json > http://localhost:8080. Run
@@ -45,6 +46,9 @@ Server only:
                          (optional $PLANNER_AUTH_SECRET to pin the HMAC key).
   $PORT, if set, overrides --port's default (some hosting platforms set it).
 `
+
+// Version is stamped by `make cli-dist` via -ldflags -X.
+var Version = "dev"
 
 // Run dispatches a subcommand. args is os.Args[1:].
 func Run(args []string) int {
@@ -71,6 +75,9 @@ func Run(args []string) int {
 		err = cmdReply(rest)
 	case "-h", "--help", "help":
 		fmt.Print(usage)
+		return 0
+	case "version", "--version":
+		fmt.Println(Version)
 		return 0
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n\n%s", cmd, usage)

@@ -3,6 +3,9 @@
 # Platforms whose CLI binaries the server distributes at /cli/{platform}.
 CLI_PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
 
+# Reported by `planner version`; the release workflow passes the git tag.
+VERSION ?= dev
+
 # Full build: frontend bundle (npm/esbuild) then the Go binary with assets embedded.
 build: frontend go
 
@@ -22,7 +25,7 @@ cli-dist:
 		os=$${p%-*}; arch=$${p#*-}; ext=""; \
 		[ "$$os" = "windows" ] && ext=".exe"; \
 		echo "building cli-dist/planner-$$p$$ext.gz"; \
-		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "-s -w" \
+		CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch go build -trimpath -ldflags "-s -w -X planner/internal/cli.Version=$(VERSION)" \
 			-o cli-dist/planner-$$p$$ext . || exit 1; \
 		gzip -9 -f cli-dist/planner-$$p$$ext || exit 1; \
 	done

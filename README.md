@@ -9,6 +9,17 @@ planner is a single Go binary: a small JSON API serving both a React web UI (the
 human's interface) and the `planner` CLI (the agent's interface). The server owns
 the database — SQLite by default, Postgres for deployments.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/priyanshu-shubham/planner/main/install.sh | sh
+```
+
+Installs the latest release (Linux/macOS, amd64/arm64) to `~/.local/bin`. Pin a
+release with `| PLANNER_VERSION=v0.1.0 sh`, or change the location with
+`PLANNER_INSTALL_DIR`. Windows binaries are on the
+[releases page](https://github.com/priyanshu-shubham/planner/releases).
+
 ## Quick start
 
 ```sh
@@ -79,3 +90,7 @@ go test ./...                                      # store + web + cli tests
 
 The web UI is built with esbuild into `internal/web/static/`, which the Go binary
 embeds — rebuild the bundle after changing anything under `web/frontend/src`.
+
+To release, push a `v*` tag (`git tag v0.1.0 && git push origin v0.1.0`);
+`.github/workflows/release.yml` publishes the `make cli-dist` binaries as a GitHub
+release, which `install.sh` downloads.

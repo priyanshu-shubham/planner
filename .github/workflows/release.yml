@@ -1,0 +1,32 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: web/frontend/package-lock.json
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+      # The Go binary embeds this bundle, so it must exist before tests and builds.
+      - run: npm ci && npm run build
+        working-directory: web/frontend
+      - run: go test ./...
+      - run: make cli-dist VERSION="$GITHUB_REF_NAME"
+      # Windows has no built-in gunzip; ship a runnable .exe instead.
+      - run: gunzip cli-dist/*.exe.gz
+      - run: gh release create "$GITHUB_REF_NAME" cli-dist/* --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -503,11 +503,8 @@ func (s *sqlStore) DeletePlan(planID string) error {
 		(SELECT id FROM versions WHERE plan_id=?)`), planID); err != nil {
 		return err
 	}
-	for _, sha := range candidateSHAs {
-		if _, err := tx.Exec(s.rebind(`DELETE FROM file_blobs WHERE sha256=?
-			AND NOT EXISTS (SELECT 1 FROM version_files WHERE sha256=?)`), sha, sha); err != nil {
-			return err
-		}
+	if err := s.sweepOrphanBlobs(tx, candidateSHAs); err != nil {
+		return err
 	}
 	if _, err := tx.Exec(s.rebind(`DELETE FROM versions WHERE plan_id=?`), planID); err != nil {
 		return err
@@ -521,6 +518,95 @@ func (s *sqlStore) DeletePlan(planID string) error {
 		return ErrNotFound
 	}
 	return tx.Commit()
+}
+
+// DeleteVersion permanently removes one version of a plan: its comments, their
+// replies, its share selections and file links, and any file blob no other
+// version still references. Remaining versions keep their numbers, so deleting
+// the latest version frees its number for the next AddVersion. A plan's only
+// version is refused with ErrLastVersion (delete the plan instead).
+func (s *sqlStore) DeleteVersion(planID string, number int) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	pred, args := s.planPred("id", "owner_id")
+	var ok bool
+	if err := tx.QueryRow(s.rebind(`SELECT EXISTS(SELECT 1 FROM plans WHERE id=?`+pred+`)`), append([]any{planID}, args...)...).Scan(&ok); err != nil {
+		return err
+	}
+	if !ok {
+		return ErrNotFound
+	}
+
+	var versionID string
+	err = tx.QueryRow(s.rebind(`SELECT id FROM versions WHERE plan_id=? AND number=?`), planID, number).Scan(&versionID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	var count int
+	if err := tx.QueryRow(s.rebind(`SELECT COUNT(*) FROM versions WHERE plan_id=?`), planID).Scan(&count); err != nil {
+		return err
+	}
+	if count <= 1 {
+		return ErrLastVersion
+	}
+
+	if _, err := tx.Exec(s.rebind(`DELETE FROM replies WHERE comment_id IN
+		(SELECT id FROM comments WHERE version_id=?)`), versionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(s.rebind(`DELETE FROM comments WHERE version_id=?`), versionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(s.rebind(`DELETE FROM share_versions WHERE version_id=?`), versionID); err != nil {
+		return err
+	}
+	rows, err := tx.Query(s.rebind(`SELECT DISTINCT sha256 FROM version_files WHERE version_id=?`), versionID)
+	if err != nil {
+		return err
+	}
+	var candidateSHAs []string
+	for rows.Next() {
+		var sha string
+		if err := rows.Scan(&sha); err != nil {
+			rows.Close()
+			return err
+		}
+		candidateSHAs = append(candidateSHAs, sha)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	rows.Close()
+	if _, err := tx.Exec(s.rebind(`DELETE FROM version_files WHERE version_id=?`), versionID); err != nil {
+		return err
+	}
+	if err := s.sweepOrphanBlobs(tx, candidateSHAs); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(s.rebind(`DELETE FROM versions WHERE id=?`), versionID); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// sweepOrphanBlobs deletes each candidate blob that no version_files row still
+// references; blobs another version cites are left untouched.
+func (s *sqlStore) sweepOrphanBlobs(tx *sql.Tx, shas []string) error {
+	for _, sha := range shas {
+		if _, err := tx.Exec(s.rebind(`DELETE FROM file_blobs WHERE sha256=?
+			AND NOT EXISTS (SELECT 1 FROM version_files WHERE sha256=?)`), sha, sha); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // planBlobSHAs returns the distinct blob shas referenced by any of a plan's

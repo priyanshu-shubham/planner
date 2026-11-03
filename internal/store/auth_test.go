@@ -235,6 +235,9 @@ func TestTwoUserIsolation(t *testing.T) {
 			if err := bs.DeletePlan(p.ID); !errors.Is(err, ErrNotFound) {
 				t.Fatalf("bob DeletePlan = %v, want ErrNotFound", err)
 			}
+			if err := bs.DeleteVersion(p.ID, 1); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("bob DeleteVersion = %v, want ErrNotFound", err)
+			}
 
 			// Alice's data is untouched after all of Bob's attempts.
 			if got, err := as.GetPlan(p.ID); err != nil || got.Status != PlanActive {

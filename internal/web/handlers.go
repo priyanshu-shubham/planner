@@ -1,6 +1,7 @@
 package web
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"strings"
@@ -692,6 +693,30 @@ func (h *handlers) apiDeletePlan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := st.DeletePlan(id); err != nil {
+		writeNotFoundOr(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// apiDeleteVersion removes one version (human-only, like plan deletion). The
+// version must be given as an explicit number — "latest" is rejected so a
+// delete never targets a moving alias. A plan's only version is a 409.
+func (h *handlers) apiDeleteVersion(w http.ResponseWriter, r *http.Request) {
+	st, id, ok := h.requireOwner(w, r)
+	if !ok {
+		return
+	}
+	n, err := strconv.Atoi(r.PathValue("n"))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "bad version")
+		return
+	}
+	if err := st.DeleteVersion(id, n); err != nil {
+		if errors.Is(err, store.ErrLastVersion) {
+			writeJSONError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeNotFoundOr(w, err)
 		return
 	}

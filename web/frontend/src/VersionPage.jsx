@@ -184,6 +184,19 @@ export function VersionPage({ planId, number, navigate }) {
   const openSorted = [...open].sort((a, b) => (a.whole_file === b.whole_file ? a.line_start - b.line_start : a.whole_file ? -1 : 1));
   const compare = compareTarget(view.versions, view.number);
 
+  async function deleteVersion() {
+    const n = view.comments.length;
+    const what = n ? ` and its ${n} comment${n === 1 ? "" : "s"}` : "";
+    if (!confirm(`Delete v${view.number}${what}? This cannot be undone.`)) return;
+    try {
+      await api.deleteVersion(planId, view.number);
+      const next = Math.max(...view.versions.filter((v) => v !== view.number));
+      navigate(`/plans/${planId}/v/${next}`);
+    } catch (e) {
+      setErr(e.message);
+    }
+  }
+
   return (
     <>
       <Header navigate={navigate}>
@@ -214,6 +227,16 @@ export function VersionPage({ planId, number, navigate }) {
           <FullscreenIcon />
           <span className="fs-label">Full screen</span>
         </button>
+        {!shared && view.versions.length > 1 && (
+          <button
+            className="icon-btn danger"
+            title={`Delete v${view.number}`}
+            aria-label={`Delete v${view.number}`}
+            onClick={deleteVersion}
+          >
+            <TrashIcon />
+          </button>
+        )}
         <span className="spacer" />
         {!shared && (
           <ShareButton

@@ -35,6 +35,7 @@ export const api = {
   setPlanStatus: (id, status) => req("POST", `/api/plans/${id}/status`, { status }),
   setPlanProject: (id, project) => req("POST", `/api/plans/${id}/project`, { project }),
   versionView: (id, n) => req("GET", `/api/plans/${id}/v/${n}`),
+  deleteVersion: (id, n) => req("DELETE", `/api/plans/${id}/v/${n}`),
   // referenced-file content by sha (content-addressed, immutably cached)
   file: (sha) => req("GET", `/api/files/${sha}`),
   addComment: (id, n, c) => req("POST", `/api/plans/${id}/v/${n}/comments`, c),

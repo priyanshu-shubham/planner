@@ -66,6 +66,7 @@ func newHandler(st store.Store, cfg Config) (http.Handler, error) {
 	api("POST /api/plans/{id}/project", h.apiSetPlanProject)
 	api("POST /api/plans/{id}/versions", h.apiAddVersion)
 	api("GET /api/plans/{id}/v/{n}", h.apiVersionView)
+	api("DELETE /api/plans/{id}/v/{n}", h.apiDeleteVersion)
 	api("POST /api/plans/{id}/v/{n}/comments", h.apiAddComment)
 	// Comment/reply actions live under the plan path: {id} (a plan or share id)
 	// is the access credential each request is authorized against, and {cid} is

@@ -8,6 +8,10 @@ import (
 // ErrNotFound is returned by any backend when a requested entity does not exist.
 var ErrNotFound = errors.New("not found")
 
+// ErrLastVersion is returned by DeleteVersion when the version is the plan's
+// only remaining one; delete the plan instead.
+var ErrLastVersion = errors.New("cannot delete a plan's only version")
+
 // Store is the storage backend planner runs on. The web server (and through it
 // the CLI) depends only on this interface, so the same handlers run against the
 // local SQLite file (OpenSQLite) or a Postgres server (OpenPostgres).
@@ -65,6 +69,10 @@ type Store interface {
 
 	// Plan deletion / lifecycle.
 	DeletePlan(planID string) error
+	// DeleteVersion removes one version with its comments, replies, share
+	// selections and file links. Other versions keep their numbers. The plan's
+	// only version is refused with ErrLastVersion.
+	DeleteVersion(planID string, number int) error
 	Close() error
 
 	// Auth & scoping. WithOwner returns a copy of this store scoped to one user

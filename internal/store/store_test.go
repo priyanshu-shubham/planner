@@ -433,3 +433,113 @@ func findSummary(t *testing.T, s Store, planID string) PlanSummary {
 	t.Fatalf("plan %s missing from ListPlans", planID)
 	return PlanSummary{}
 }
+
+// TestDeleteVersion covers single-version deletion across both backends: the
+// version's comments, replies, share selection and file links go with it; blobs
+// still cited by another version survive while orphans are swept; other
+// versions keep their numbers; the only remaining version is refused; and a
+// freed latest number is reused by the next AddVersion.
+func TestDeleteVersion(t *testing.T) {
+	for name, open := range backends() {
+		t.Run(name, func(t *testing.T) {
+			s := open(t)
+			defer s.Close()
+
+			shared := FileSnapshot{Path: "go.mod", Content: "module example\n"}
+			onlyV3 := FileSnapshot{Path: "main.go", Language: "go", Content: "package main\n"}
+
+			p, v1, err := s.CreatePlan("Versions", "one", "", "/work", []FileSnapshot{shared})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v2, err := s.AddVersion(p.ID, "two", "", []FileSnapshot{shared})
+			if err != nil {
+				t.Fatal(err)
+			}
+			v3, err := s.AddVersion(p.ID, "three", "", []FileSnapshot{onlyV3})
+			if err != nil {
+				t.Fatal(err)
+			}
+			c, err := s.AddComment(p.ID, v2.ID, 0, 0, "", "note", "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.AddReply(c.ID, AuthorAgent, "ack", ""); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.SetSharePolicy(p.ID, false, []int{2, 3}); err != nil {
+				t.Fatal(err)
+			}
+			v3refs, err := s.GetVersionFileList(v3.ID)
+			if err != nil || len(v3refs) != 1 {
+				t.Fatalf("v3 file refs = %d, err=%v", len(v3refs), err)
+			}
+			sharedRefs, _ := s.GetVersionFileList(v1.ID)
+
+			// Deleting a middle version removes its rows but keeps v1/v3 numbered.
+			if err := s.DeleteVersion(p.ID, 2); err != nil {
+				t.Fatalf("DeleteVersion(2): %v", err)
+			}
+			if _, err := s.GetVersion(p.ID, 2); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("GetVersion(2) after delete = %v, want ErrNotFound", err)
+			}
+			if cs, _ := s.ListComments(v2.ID, false); len(cs) != 0 {
+				t.Fatalf("comments should be gone, got %d", len(cs))
+			}
+			if refs, _ := s.GetVersionFileList(v2.ID); len(refs) != 0 {
+				t.Fatalf("v2 file list should be cleared, got %d", len(refs))
+			}
+			got, err := s.GetPlan(p.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(got.Versions) != 2 || got.Versions[0] != 1 || got.Versions[1] != 3 {
+				t.Fatalf("versions = %v, want [1 3]", got.Versions)
+			}
+			if len(got.ShareVersions) != 1 || got.ShareVersions[0] != 3 {
+				t.Fatalf("share versions = %v, want [3]", got.ShareVersions)
+			}
+			db := rawDB(s)
+			var n int
+			if err := db.QueryRow(`SELECT COUNT(*) FROM comments`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("comment rows = %d, err=%v, want 0", n, err)
+			}
+			if err := db.QueryRow(`SELECT COUNT(*) FROM replies`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("reply rows = %d, err=%v, want 0", n, err)
+			}
+			// go.mod is still cited by v1, so its blob survives v2's deletion.
+			if _, err := s.GetBlob(sharedRefs[0].SHA); err != nil {
+				t.Fatalf("shared blob should survive: %v", err)
+			}
+
+			// v3's file has no other referrer, so deleting v3 sweeps its blob.
+			if err := s.DeleteVersion(p.ID, 3); err != nil {
+				t.Fatalf("DeleteVersion(3): %v", err)
+			}
+			if _, err := s.GetBlob(v3refs[0].SHA); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("orphan blob should be swept, got %v", err)
+			}
+
+			// The only remaining version cannot be deleted.
+			if err := s.DeleteVersion(p.ID, 1); !errors.Is(err, ErrLastVersion) {
+				t.Fatalf("DeleteVersion(last) = %v, want ErrLastVersion", err)
+			}
+			if _, err := s.GetVersion(p.ID, 1); err != nil {
+				t.Fatalf("v1 should remain: %v", err)
+			}
+
+			// A freed latest number is reused; numbers are not renumbered.
+			nv, err := s.AddVersion(p.ID, "again", "", nil)
+			if err != nil || nv.Number != 2 {
+				t.Fatalf("AddVersion after deleting latest = %d, err=%v, want 2", nv.Number, err)
+			}
+
+			if err := s.DeleteVersion(p.ID, 99); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("DeleteVersion(unknown version) = %v, want ErrNotFound", err)
+			}
+			if err := s.DeleteVersion("nope", 1); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("DeleteVersion(unknown plan) = %v, want ErrNotFound", err)
+			}
+		})
+	}
+}
